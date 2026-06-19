@@ -1,0 +1,17 @@
+{
+  "_README": [
+    "【設定項目の解説】",
+    "",
+    "■ searchFolder（必須）",
+    "   宛名番号で検索する対象フォルダの絶対パス。配下を再帰的に検索する。",
+    "   文字列（単一フォルダ）または配列（複数フォルダ）で指定可能。",
+    "   配列の場合は全フォルダを横断検索して結果をまとめて表示する。",
+    "",
+    "■ depositSeizureListScript（任意）",
+    "   預金差押予定一覧 作成ツール（deposit_seizure_list.ps1）の絶対パス。",
+    "   設定すると、検索結果から「預金差押リストに追加」が選べるようになる。",
+    "   未設定または指定パスに該当ファイルがない場合は、検索とファイルを開く操作のみ可能。"
+  ],
+  "searchFolder": "D:\\Work\\Fuchu\\2026\\照会結果",
+  "depositSeizureListScript": "D:\\Work\\Fuchu\\2026\\deposit_seizure_list\\deposit_seizure_list.ps1"
+}
