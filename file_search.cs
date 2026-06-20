@@ -6,7 +6,7 @@
 // build.bat を実行して file_search.exe を生成し、ダブルクリックで起動する。
 // 宛名番号を入力して、設定で指定したフォルダ配下から .xlsm ファイルを検索する。
 // 検索結果から「ファイルを開く」または「差押リストに追加」を選択できる。
-// 「差押リストに追加」を選ぶと、deposit_seizure_list.ps1 を呼び出して
+// 「差押リストに追加」を選ぶと、deposit_seizure_list.exe を呼び出して
 // そのファイルを処理対象として渡す。
 //
 // 【ビルド方法】
@@ -882,8 +882,7 @@ public class FileSearchApp : Application
         var selectedItems = resultList.SelectedItems.Cast<SearchResultItem>().ToList();
         if (selectedItems.Count > 0)
         {
-            foreach (var item in selectedItems)
-                AddToSeizureList(item.FullPath);
+            AddToSeizureList(selectedItems.Select(item => item.FullPath).ToArray());
             return;
         }
 
@@ -893,35 +892,35 @@ public class FileSearchApp : Application
             AddToSeizureList(entry.Path);
     }
 
-    // deposit_seizure_list.ps1 を子プロセスとして呼び出す（GUI版完成までの暫定仕様）
-    private void AddToSeizureList(string fullPath)
+    // deposit_seizure_list.exe を子プロセスとして呼び出す
+    // config.DepositScript に設定された exe パスにファイルパスを引数として渡す
+    // 複数ファイルを渡した場合は1プロセスで連続処理される
+    private void AddToSeizureList(params string[] paths)
     {
         if (config.DepositScript == null) return;
 
-        if (!File.Exists(fullPath))
+        var missing = paths.Where(p => !File.Exists(p)).ToArray();
+        if (missing.Length > 0)
         {
             MessageBox.Show(
-                "ファイルが見つかりません:\n" + fullPath,
+                "ファイルが見つかりません:\n" + string.Join("\n", missing),
                 "エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         try
         {
-            // UseShellExecute=false で EnvironmentVariables を使用可能にする
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
-                Arguments = string.Format(
-                    "-ExecutionPolicy Bypass -File \"{0}\" \"{1}\"",
-                    config.DepositScript, fullPath),
-                UseShellExecute = false,
-                CreateNoWindow = false
+                FileName = config.DepositScript,
+                Arguments = string.Join(" ", paths.Select(p => "\"" + p + "\"")),
+                UseShellExecute = true
             };
-            psi.EnvironmentVariables["DEPOSIT_SEIZURE_NO_CLEAR"] = "1";
 
             Process.Start(psi);
-            statusLeft.Text = "差押リストに追加中: " + System.IO.Path.GetFileName(fullPath);
+            statusLeft.Text = paths.Length == 1
+                ? "差押リストに追加中: " + System.IO.Path.GetFileName(paths[0])
+                : "差押リストに追加中: " + paths.Length + " 件";
         }
         catch (Exception ex)
         {
