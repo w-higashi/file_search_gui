@@ -222,6 +222,8 @@ public class FileSearchApp : Application
     private string activeTab = "history";                 // サイドパネルのアクティブタブ（"history" / "file"）
     private FrameworkElement resultItemsPanel;            // 検索結果のデータ行エリア（フェードアニメーション用）
     private BackgroundWorker searchWorker;                // 検索処理の非同期実行用
+    private Border searchOverlay;                        // 検索中のローディングオーバーレイ
+    private RotateTransform spinnerRotation;              // スピナーの回転トランスフォーム
 
     // --- キャッシュ済みブラシ（MakeIcon・UpdateFileHistoryUI 用） ---
     private static readonly SolidColorBrush BrushIconGray    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#555555"));
@@ -331,6 +333,12 @@ public class FileSearchApp : Application
         tabFileText       = (TextBlock)window.FindName("TabFileText");
         statusLeft        = (TextBlock)window.FindName("StatusLeft");
         statusRight       = (TextBlock)window.FindName("StatusRight");
+        searchOverlay     = (Border)window.FindName("SearchOverlay");
+
+        // スピナーの RotateTransform を取得（回転アニメーションの開始/停止を制御するため）
+        var spinnerPath = (FrameworkElement)window.FindName("SpinnerPath");
+        if (spinnerPath != null)
+            spinnerRotation = spinnerPath.RenderTransform as RotateTransform;
     }
 
     // ==============================================================
@@ -401,6 +409,8 @@ public class FileSearchApp : Application
             searchBox.Text = "";
             currentResults.Clear();
             resultList.ItemsSource = null;
+            searchOverlay.BeginAnimation(UIElement.OpacityProperty, null);
+            searchOverlay.Visibility = Visibility.Collapsed;
             statusLeft.Text = "";
             statusLeft.Foreground = BrushFooter;
             searchButton.IsEnabled = true;
@@ -519,7 +529,21 @@ public class FileSearchApp : Application
 
         // --- 列幅自動調整（ウィンドウリサイズ時にファイル名列が残幅を埋める） ---
         resultList.SizeChanged += delegate { AdjustColumnWidths(); };
-        resultList.Loaded += delegate { AdjustColumnWidths(); };
+        resultList.Loaded += delegate
+        {
+            AdjustColumnWidths();
+            // オーバーレイを列ヘッダーの下に配置（ヘッダーの実高さを取得して Margin に反映）
+            var headerRow = FindVisualChild<GridViewHeaderRowPresenter>(resultList);
+            if (headerRow != null)
+                searchOverlay.Margin = new Thickness(0, headerRow.ActualHeight, 0, 0);
+        };
+
+        // --- スピナーアニメーション: オーバーレイの表示/非表示に連動 ---
+        searchOverlay.IsVisibleChanged += delegate(object s, DependencyPropertyChangedEventArgs dpce)
+        {
+            if ((bool)dpce.NewValue) StartSpinner();
+            else StopSpinner();
+        };
 
         // --- 検索処理の非同期ワーカー ---
         searchWorker = new BackgroundWorker { WorkerSupportsCancellation = true };
@@ -567,6 +591,24 @@ public class FileSearchApp : Application
             if (found != null) return found;
         }
         return null;
+    }
+
+    // スピナー回転アニメーションを開始（RepeatBehavior.Forever で無限回転）
+    private void StartSpinner()
+    {
+        if (spinnerRotation == null) return;
+        var anim = new DoubleAnimation();
+        anim.By = 360;
+        anim.Duration = new Duration(TimeSpan.FromSeconds(1));
+        anim.RepeatBehavior = RepeatBehavior.Forever;
+        spinnerRotation.BeginAnimation(RotateTransform.AngleProperty, anim);
+    }
+
+    // スピナー回転アニメーションを停止
+    private void StopSpinner()
+    {
+        if (spinnerRotation == null) return;
+        spinnerRotation.BeginAnimation(RotateTransform.AngleProperty, null);
     }
 
     // ==============================================================
@@ -795,6 +837,8 @@ public class FileSearchApp : Application
         statusLeft.Text = "検索中...";
         statusLeft.Foreground = BrushFooter;
         searchButton.IsEnabled = false;
+        searchOverlay.BeginAnimation(UIElement.OpacityProperty, null);  // 前回のフェードアウトをクリア
+        searchOverlay.Visibility = Visibility.Visible;
 
         // --- フェード準備（データ行のみ対象、列ヘッダーは含めない） ---
         if (resultItemsPanel == null)
@@ -859,6 +903,11 @@ public class FileSearchApp : Application
     private void SearchWorker_Completed(object sender, RunWorkerCompletedEventArgs e)
     {
         searchButton.IsEnabled = true;
+
+        // オーバーレイのフェードアウト（100ms → Collapsed）
+        var fadeOut = new DoubleAnimation(1, 0, new Duration(TimeSpan.FromMilliseconds(100)));
+        fadeOut.Completed += delegate { searchOverlay.Visibility = Visibility.Collapsed; };
+        searchOverlay.BeginAnimation(UIElement.OpacityProperty, fadeOut);
 
         if (e.Cancelled) return;
 
@@ -1808,6 +1857,19 @@ public class FileSearchApp : Application
                                     </GridView>
                                 </ListView.View>
                             </ListView>
+                            <!-- ローディングオーバーレイ（データ行エリアのみ覆う） -->
+                            <Border x:Name='SearchOverlay' Background='#CCFFFFFF'
+                                    Visibility='Collapsed'>
+                                <Path x:Name='SpinnerPath'
+                                      Data='M 14,2 A 12,12 0 1 1 2,14'
+                                      Stroke='#005FB8' StrokeThickness='2.5'
+                                      StrokeStartLineCap='Round' StrokeEndLineCap='Round'
+                                      Width='28' Height='28' Stretch='None'
+                                      HorizontalAlignment='Center' VerticalAlignment='Center'
+                                      RenderTransformOrigin='0.5,0.5'>
+                                    <Path.RenderTransform><RotateTransform/></Path.RenderTransform>
+                                </Path>
+                            </Border>
                         </Grid>
                     </DockPanel>
                 </Border>
