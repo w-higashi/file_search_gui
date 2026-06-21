@@ -22,6 +22,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -220,6 +221,7 @@ public class FileSearchApp : Application
     private bool persistHistory = true;                  // 永続化が有効か（読み書き失敗時に false に切り替わる）
     private string activeTab = "history";                 // サイドパネルのアクティブタブ（"history" / "file"）
     private FrameworkElement resultItemsPanel;            // 検索結果のデータ行エリア（フェードアニメーション用）
+    private BackgroundWorker searchWorker;                // 検索処理の非同期実行用
 
     // --- キャッシュ済みブラシ（MakeIcon・UpdateFileHistoryUI 用） ---
     private static readonly SolidColorBrush BrushIconGray    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#555555"));
@@ -394,11 +396,14 @@ public class FileSearchApp : Application
         // --- クリアボタン（検索ボックス内 ×）---
         clearButton.Click += delegate
         {
+            if (searchWorker.IsBusy)
+                searchWorker.CancelAsync();
             searchBox.Text = "";
             currentResults.Clear();
             resultList.ItemsSource = null;
             statusLeft.Text = "";
             statusLeft.Foreground = BrushFooter;
+            searchButton.IsEnabled = true;
             openButton.IsEnabled = false;
             addButton.IsEnabled = false;
             searchBox.Focus();
@@ -412,6 +417,7 @@ public class FileSearchApp : Application
         searchHistoryList.PreviewMouseUp += delegate(object s, MouseButtonEventArgs e)
         {
             if (e.ChangedButton != MouseButton.Left) return;
+            if (searchWorker.IsBusy) return;
             var idx = searchHistoryList.SelectedIndex;
             if (idx < 0 || idx >= searchHistory.Count) return;
             var query = searchHistory[idx];
@@ -514,6 +520,11 @@ public class FileSearchApp : Application
         // --- 列幅自動調整（ウィンドウリサイズ時にファイル名列が残幅を埋める） ---
         resultList.SizeChanged += delegate { AdjustColumnWidths(); };
         resultList.Loaded += delegate { AdjustColumnWidths(); };
+
+        // --- 検索処理の非同期ワーカー ---
+        searchWorker = new BackgroundWorker { WorkerSupportsCancellation = true };
+        searchWorker.DoWork += SearchWorker_DoWork;
+        searchWorker.RunWorkerCompleted += SearchWorker_Completed;
     }
 
     // ファイル名列が残りスペースを埋めるよう列幅を再計算
@@ -761,17 +772,16 @@ public class FileSearchApp : Application
     }
 
     // ==============================================================
-    // 検索処理
+    // 検索処理（非同期）
     // ==============================================================
 
-    // 宛名番号で .xlsm ファイルを検索し、結果を表示
-    // TODO: 大量ファイルの場合は BackgroundWorker で UI をブロックしない方式に変更
+    // 宛名番号で .xlsm ファイルを非同期検索し、結果を表示
+    // I/O 処理は BackgroundWorker で実行し、UI スレッドのブロックを防止する
     private void ExecuteSearch(string query)
     {
         query = (query ?? "").Trim();
         if (string.IsNullOrEmpty(query)) return;
-
-        statusLeft.Text = "検索中...";
+        if (searchWorker.IsBusy) return;
 
         // --- 検索履歴に追加（重複除去→先頭挿入→上限超過分を削除） ---
         searchHistory.Remove(query);
@@ -780,6 +790,11 @@ public class FileSearchApp : Application
             searchHistory.RemoveAt(config.SearchHistoryMax);
         SaveHistory();
         UpdateSearchHistoryUI();
+
+        // --- UI準備（検索中の操作を制限） ---
+        statusLeft.Text = "検索中...";
+        statusLeft.Foreground = BrushFooter;
+        searchButton.IsEnabled = false;
 
         // --- フェード準備（データ行のみ対象、列ヘッダーは含めない） ---
         if (resultItemsPanel == null)
@@ -790,16 +805,28 @@ public class FileSearchApp : Application
             ForceRender();
         }
 
-        // --- 検索実行 ---
-        // EnumerateFiles で遅延列挙（GetFiles と異なり全件取得を待たず順次処理可能）
+        // --- 非同期検索開始 ---
+        searchWorker.RunWorkerAsync(query);
+    }
+
+    // ワーカースレッド: ファイル検索 + ソート（UI スレッドをブロックしない）
+    private void SearchWorker_DoWork(object sender, DoWorkEventArgs e)
+    {
+        var query = (string)e.Argument;
         var results = new List<SearchResultItem>();
+
+        // EnumerateFiles で遅延列挙（GetFiles と異なり全件取得を待たず順次処理可能）
         foreach (var folder in config.SearchFolders)
         {
+            if (searchWorker.CancellationPending) { e.Cancel = true; return; }
+
             try
             {
                 var dir = new DirectoryInfo(folder);
                 foreach (var file in dir.EnumerateFiles("*.xlsm", SearchOption.AllDirectories))
                 {
+                    if (searchWorker.CancellationPending) { e.Cancel = true; return; }
+
                     // BaseName（拡張子なし）に入力文字列を含むか（部分一致・大文字小文字無視）
                     var baseName = System.IO.Path.GetFileNameWithoutExtension(file.Name);
                     if (baseName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
@@ -823,14 +850,30 @@ public class FileSearchApp : Application
             catch { /* アクセス権エラー等は無視して次のフォルダへ */ }
         }
 
-        // --- ソート適用（デフォルト: 更新日の降順） ---
-        currentResults = results;
+        // ソートもワーカースレッドで実行（デフォルト: 更新日の降順）
+        results.Sort((a, b) => b.LastWriteTime.CompareTo(a.LastWriteTime));
+        e.Result = results;
+    }
+
+    // 検索完了ハンドラ（UI スレッドで実行）
+    private void SearchWorker_Completed(object sender, RunWorkerCompletedEventArgs e)
+    {
+        searchButton.IsEnabled = true;
+
+        if (e.Cancelled) return;
+
+        if (e.Error != null)
+        {
+            statusLeft.Text = "検索中にエラーが発生しました";
+            statusLeft.Foreground = BrushError;
+            return;
+        }
+
+        // --- 結果を反映 ---
+        currentResults = (List<SearchResultItem>)e.Result;
         currentSortColumn = "LastWriteTime";
         currentSortAscending = false;
-        ApplySort();
         UpdateSortIndicators();
-
-        // --- UI更新 ---
         UpdateResultList();
 
         // --- フェードイン ---
