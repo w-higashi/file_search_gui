@@ -21,7 +21,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -29,11 +28,10 @@ using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Xml;
 
 // ==============================================================
@@ -197,6 +195,7 @@ public class FileSearchApp : Application
     private bool currentSortAscending = false;           // true=昇順, false=降順
     private bool persistHistory = true;                  // 永続化が有効か（読み書き失敗時に false に切り替わる）
     private string activeTab = "history";                 // サイドパネルのアクティブタブ（"history" / "file"）
+    private FrameworkElement resultItemsPanel;            // 検索結果のデータ行エリア（フェードアニメーション用）
 
     // --- 定数 ---
     private const int SEARCH_HISTORY_MAX = 5;   // 検索履歴の上限件数
@@ -475,6 +474,22 @@ public class FileSearchApp : Application
             new RelayCommand(p => DeleteSelectedHistory()),
             new KeyGesture(Key.Delete)));
 
+        // --- 空白領域クリックで選択解除 ---
+        window.MouseDown += delegate(object s, MouseButtonEventArgs e)
+        {
+            // ListViewItem / ListBoxItem 上のクリックは無視（選択操作を妨げない）
+            var hit = e.OriginalSource as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is ListViewItem || hit is ListBoxItem) return;
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+            resultList.SelectedIndex = -1;
+            fileHistoryList.SelectedIndex = -1;
+            searchHistoryList.SelectedIndex = -1;
+            UpdateButtonState();
+        };
+
         // --- 列幅自動調整（ウィンドウリサイズ時にファイル名列が残幅を埋める） ---
         resultList.SizeChanged += delegate { AdjustColumnWidths(); };
         resultList.Loaded += delegate { AdjustColumnWidths(); };
@@ -501,6 +516,25 @@ public class FileSearchApp : Application
         gv.Columns[1].Width = folderW;
         gv.Columns[2].Width = dateW;
         gv.Columns[3].Width = sizeW;
+    }
+
+    // Dispatcher の Render 優先度で空処理を実行し、保留中の描画を強制反映させる
+    private void ForceRender()
+    {
+        window.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Render, new Action(() => { }));
+    }
+
+    // ビジュアルツリーから指定型の子要素を深さ優先で検索
+    private static T FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T) return (T)child;
+            var found = FindVisualChild<T>(child);
+            if (found != null) return found;
+        }
+        return null;
     }
 
     // ==============================================================
@@ -707,6 +741,15 @@ public class FileSearchApp : Application
         SaveHistory();
         UpdateSearchHistoryUI();
 
+        // --- フェード準備（データ行のみ対象、列ヘッダーは含めない） ---
+        if (resultItemsPanel == null)
+            resultItemsPanel = FindVisualChild<ItemsPresenter>(resultList);
+        if (resultItemsPanel != null)
+        {
+            resultItemsPanel.Opacity = 0;
+            ForceRender();
+        }
+
         // --- 検索実行 ---
         // EnumerateFiles で遅延列挙（GetFiles と異なり全件取得を待たず順次処理可能）
         var results = new List<SearchResultItem>();
@@ -749,6 +792,11 @@ public class FileSearchApp : Application
 
         // --- UI更新 ---
         UpdateResultList();
+
+        // --- フェードイン ---
+        if (resultItemsPanel != null)
+            resultItemsPanel.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(100))));
     }
 
     // 検索結果を ListView に反映
