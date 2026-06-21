@@ -467,16 +467,18 @@ public class FileSearchApp : Application
             new RelayCommand(p => DeleteSelectedHistory()),
             new KeyGesture(Key.Delete)));
 
-        // --- 空白領域クリックで選択解除 ---
+        // --- 空白領域クリックで選択・フォーカスを解除 ---
         window.MouseDown += delegate(object s, MouseButtonEventArgs e)
         {
-            // ListViewItem / ListBoxItem 上のクリックは無視（選択操作を妨げない）
+            // 操作対象の要素上のクリックは無視
             var hit = e.OriginalSource as DependencyObject;
             while (hit != null)
             {
-                if (hit is ListViewItem || hit is ListBoxItem) return;
+                if (hit is ListViewItem || hit is ListBoxItem
+                    || hit is TextBox || hit is Button) return;
                 hit = VisualTreeHelper.GetParent(hit);
             }
+            Keyboard.ClearFocus();
             resultList.SelectedIndex = -1;
             fileHistoryList.SelectedIndex = -1;
             searchHistoryList.SelectedIndex = -1;
