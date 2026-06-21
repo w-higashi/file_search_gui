@@ -227,6 +227,8 @@ public class FileSearchApp : Application
     private static readonly SolidColorBrush BrushAccent      = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#005FB8"));
     private static readonly SolidColorBrush BrushSecondary   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#999999"));
     private static readonly SolidColorBrush BrushTabInactive = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#777777"));
+    private static readonly SolidColorBrush BrushFooter      = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#666666"));
+    private static readonly SolidColorBrush BrushError       = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#D32F2F"));
 
     // --- ソート列名のマッピング（UpdateSortIndicators 用） ---
     private static readonly Dictionary<string, string> SortColumnNames = new Dictionary<string, string>
@@ -251,6 +253,8 @@ public class FileSearchApp : Application
         BrushAccent.Freeze();
         BrushSecondary.Freeze();
         BrushTabInactive.Freeze();
+        BrushFooter.Freeze();
+        BrushError.Freeze();
 
         var app = new FileSearchApp();
         app.Run();
@@ -393,7 +397,7 @@ public class FileSearchApp : Application
             currentResults.Clear();
             resultList.ItemsSource = null;
             statusLeft.Text = "";
-            statusLeft.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#666666"));
+            statusLeft.Foreground = BrushFooter;
             openButton.IsEnabled = false;
             addButton.IsEnabled = false;
             searchBox.Focus();
@@ -824,12 +828,12 @@ public class FileSearchApp : Application
         if (count == 0)
         {
             statusLeft.Text = "該当するファイルが見つかりませんでした";
-            statusLeft.Foreground = new SolidColorBrush(Colors.Red);
+            statusLeft.Foreground = BrushError;
         }
         else
         {
             statusLeft.Text = "\u2713 " + count + " 件のファイルが見つかりました";
-            statusLeft.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#666666"));
+            statusLeft.Foreground = BrushFooter;
         }
 
         openButton.IsEnabled = false;
@@ -1541,8 +1545,8 @@ public class FileSearchApp : Application
                 BorderBrush='#E0E0E0' BorderThickness='0,1,0,0' Padding='18,4'>
             <DockPanel>
                 <TextBlock x:Name='StatusRight' DockPanel.Dock='Right'
-                           FontSize='11' Foreground='#666666'/>
-                <TextBlock x:Name='StatusLeft' FontSize='11' Foreground='#666666'/>
+                           FontSize='11' Foreground='#666'/>
+                <TextBlock x:Name='StatusLeft' FontSize='11' Foreground='#666'/>
             </DockPanel>
         </Border>
 
@@ -1570,15 +1574,15 @@ public class FileSearchApp : Application
                         <Grid>
                             <TextBlock x:Name='SearchPlaceholder'
                                        Text='宛名番号を入力...' FontSize='13'
-                                       Foreground='#999999' VerticalAlignment='Center'
+                                       Foreground='#999' VerticalAlignment='Center'
                                        Margin='32,0,0,0' IsHitTestVisible='False'/>
                             <Canvas Width='14' Height='14' VerticalAlignment='Center'
                                    HorizontalAlignment='Left'
                                    Margin='10,0,0,0' IsHitTestVisible='False'>
                                 <Ellipse Canvas.Left='1' Canvas.Top='1' Width='8' Height='8'
-                                         Stroke='#999999' StrokeThickness='1.5' Fill='Transparent'/>
+                                         Stroke='#999' StrokeThickness='1.5' Fill='Transparent'/>
                                 <Line X1='8' Y1='8' X2='12' Y2='12'
-                                      Stroke='#999999' StrokeThickness='1.5'/>
+                                      Stroke='#999' StrokeThickness='1.5'/>
                             </Canvas>
                             <TextBox x:Name='SearchBox' FontSize='13' FontFamily='Consolas'
                                      Padding='28,8,28,8' BorderThickness='0' Background='Transparent'
@@ -1617,7 +1621,7 @@ public class FileSearchApp : Application
 
                     <Button x:Name='SearchButton' Grid.Column='2'
                             Style='{StaticResource AB}'>
-                        <StackPanel Orientation='Horizontal'>
+                        <StackPanel Orientation='Horizontal' Margin='-2,0,2,0'>
                             <Canvas Width='14' Height='14' Margin='0,0,4,0'>
                                 <Ellipse Canvas.Left='1' Canvas.Top='1' Width='8' Height='8'
                                          Stroke='White' StrokeThickness='1.5' Fill='Transparent'/>
@@ -1655,7 +1659,7 @@ public class FileSearchApp : Application
                                 Background='#FAFAFA'
                                 BorderBrush='#E0E0E0' BorderThickness='0,0,0,1'>
                             <TextBlock Text='&#x2261; 検索結果'
-                                       FontSize='11' Foreground='#005FB8' FontWeight='Medium'/>
+                                       FontSize='13' Foreground='#005FB8' FontWeight='Medium'/>
                         </Border>
 
                         <Grid>
