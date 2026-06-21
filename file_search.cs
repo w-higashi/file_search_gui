@@ -195,7 +195,7 @@ public class FileSearchApp : Application
     private string currentSortColumn = "LastWriteTime";  // 現在のソート列
     private bool currentSortAscending = false;           // true=昇順, false=降順
     private bool persistHistory = true;                  // 永続化が有効か（読み書き失敗時に false に切り替わる）
-    private string activeTab = "file";                   // サイドパネルのアクティブタブ（"history" / "file"）
+    private string activeTab = "history";                 // サイドパネルのアクティブタブ（"history" / "file"）
 
     // --- 定数 ---
     private const int SEARCH_HISTORY_MAX = 5;   // 検索履歴の上限件数
@@ -657,15 +657,15 @@ public class FileSearchApp : Application
                 Text = query,
                 FontSize = 12,
                 FontFamily = new FontFamily("Consolas"),
-                Foreground = BrushAccent
+                Foreground = BrushAccent,
+                VerticalAlignment = VerticalAlignment.Center
             });
 
-            var item = new ListBoxItem
+            searchHistoryList.Items.Add(new ListBoxItem
             {
                 Content = sp,
-                Padding = new Thickness(12, 8, 12, 8)
-            };
-            searchHistoryList.Items.Add(item);
+                Padding = new Thickness(10, 15, 10, 15)  // ファイルタブの2行と同等の高さに統一
+            });
         }
     }
 
@@ -1136,7 +1136,7 @@ public class FileSearchApp : Application
             {
                 Content = sp,
                 ToolTip = entry.Path,
-                Padding = new Thickness(10, 8, 10, 8)
+                Padding = new Thickness(10, 7.5, 10, 7.5)
             };
 
             fileHistoryList.Items.Add(item);
@@ -1625,24 +1625,26 @@ public class FileSearchApp : Application
                             <ColumnDefinition Width='*'/><ColumnDefinition Width='*'/>
                         </Grid.ColumnDefinitions>
                         <Border x:Name='TabHistory' Grid.Column='0' Cursor='Hand'
-                                Padding='4,8,4,6' BorderThickness='0,0,0,2'
-                                BorderBrush='Transparent'>
-                            <TextBlock x:Name='TabHistoryText' Text='検索履歴'
-                                       FontSize='11' Foreground='#777'
-                                       HorizontalAlignment='Center'/>
-                        </Border>
-                        <Border x:Name='TabFile' Grid.Column='1' Cursor='Hand'
+                                Background='Transparent'
                                 Padding='4,8,4,6' BorderThickness='0,0,0,2'
                                 BorderBrush='#005FB8'>
-                            <TextBlock x:Name='TabFileText' Text='ファイル'
+                            <TextBlock x:Name='TabHistoryText' Text='検索履歴'
                                        FontSize='11' Foreground='#005FB8'
                                        FontWeight='Medium' HorizontalAlignment='Center'/>
+                        </Border>
+                        <Border x:Name='TabFile' Grid.Column='1' Cursor='Hand'
+                                Background='Transparent'
+                                Padding='4,8,4,6' BorderThickness='0,0,0,2'
+                                BorderBrush='Transparent'>
+                            <TextBlock x:Name='TabFileText' Text='ファイル'
+                                       FontSize='11' Foreground='#777'
+                                       HorizontalAlignment='Center'/>
                         </Border>
                     </Grid>
                     <!-- タブコンテンツ（Visibility で切替） -->
                     <Grid>
                         <ListBox x:Name='SearchHistoryList' BorderThickness='0'
-                                 Background='Transparent' Visibility='Collapsed'
+                                 Background='Transparent'
                                  ItemContainerStyle='{StaticResource HistoryItem}'
                                  ScrollViewer.HorizontalScrollBarVisibility='Disabled'>
                             <ListBox.Template>
@@ -1654,7 +1656,7 @@ public class FileSearchApp : Application
                             </ListBox.Template>
                         </ListBox>
                         <ListBox x:Name='FileHistoryList' BorderThickness='0'
-                                 Background='Transparent'
+                                 Background='Transparent' Visibility='Collapsed'
                                  ItemContainerStyle='{StaticResource HistoryItem}'
                                  ScrollViewer.HorizontalScrollBarVisibility='Disabled'>
                             <ListBox.Template>
