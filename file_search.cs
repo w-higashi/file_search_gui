@@ -42,11 +42,15 @@ public class AppConfig
 {
     public string[] SearchFolders { get; set; }
     public string DepositScript { get; set; }    // null の場合は「差押リストに追加」機能が無効
+    public int SearchHistoryMax { get; set; }    // 検索履歴の上限件数
+    public int FileHistoryMax { get; set; }      // ファイル履歴の上限件数
 
     public AppConfig()
     {
         SearchFolders = new string[0];
         DepositScript = null;
+        SearchHistoryMax = 5;
+        FileHistoryMax = 10;
     }
 
     // file_search_config.json を読み込み、AppConfig を返す
@@ -126,6 +130,26 @@ public class AppConfig
                             config.DepositScript = val;
                     }
                 }
+                else if (line.Contains("\"searchHistoryMax\""))
+                {
+                    var colonIdx = line.IndexOf(':');
+                    if (colonIdx >= 0)
+                    {
+                        int val;
+                        if (int.TryParse(line.Substring(colonIdx + 1).Trim().TrimEnd(','), out val) && val > 0)
+                            config.SearchHistoryMax = val;
+                    }
+                }
+                else if (line.Contains("\"fileHistoryMax\""))
+                {
+                    var colonIdx = line.IndexOf(':');
+                    if (colonIdx >= 0)
+                    {
+                        int val;
+                        if (int.TryParse(line.Substring(colonIdx + 1).Trim().TrimEnd(','), out val) && val > 0)
+                            config.FileHistoryMax = val;
+                    }
+                }
             }
 
             // 存在するフォルダのみを採用
@@ -195,10 +219,6 @@ public class FileSearchApp : Application
     private bool persistHistory = true;                  // 永続化が有効か（読み書き失敗時に false に切り替わる）
     private string activeTab = "history";                 // サイドパネルのアクティブタブ（"history" / "file"）
     private FrameworkElement resultItemsPanel;            // 検索結果のデータ行エリア（フェードアニメーション用）
-
-    // --- 定数 ---
-    private const int SEARCH_HISTORY_MAX = 5;   // 検索履歴の上限件数
-    private const int FILE_HISTORY_MAX = 10;    // ファイル履歴の上限件数
 
     // --- キャッシュ済みブラシ（MakeIcon・UpdateFileHistoryUI 用） ---
     private static readonly SolidColorBrush BrushIconGray    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#555555"));
@@ -731,8 +751,8 @@ public class FileSearchApp : Application
         // --- 検索履歴に追加（重複除去→先頭挿入→上限超過分を削除） ---
         searchHistory.Remove(query);
         searchHistory.Insert(0, query);
-        if (searchHistory.Count > SEARCH_HISTORY_MAX)
-            searchHistory.RemoveAt(SEARCH_HISTORY_MAX);
+        if (searchHistory.Count > config.SearchHistoryMax)
+            searchHistory.RemoveAt(config.SearchHistoryMax);
         SaveHistory();
         UpdateSearchHistoryUI();
 
@@ -1153,8 +1173,8 @@ public class FileSearchApp : Application
             OpenedAt = DateTime.Now
         });
 
-        if (fileHistory.Count > FILE_HISTORY_MAX)
-            fileHistory.RemoveAt(FILE_HISTORY_MAX);
+        if (fileHistory.Count > config.FileHistoryMax)
+            fileHistory.RemoveAt(config.FileHistoryMax);
 
         SaveHistory();
         UpdateFileHistoryUI();

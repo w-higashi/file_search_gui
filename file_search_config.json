@@ -8,10 +8,18 @@
     "   配列の場合は全フォルダを横断検索して結果をまとめて表示する。",
     "",
     "■ depositSeizureListScript（任意）",
-    "   預金差押予定一覧 作成ツール（deposit_seizure_list.ps1）の絶対パス。",
+    "   預金差押予定一覧 作成ツール（deposit_seizure_list.exe）の絶対パス。",
     "   設定すると、検索結果から「預金差押リストに追加」が選べるようになる。",
-    "   未設定または指定パスに該当ファイルがない場合は、検索とファイルを開く操作のみ可能。"
+    "   未設定または指定パスに該当ファイルがない場合は、検索とファイルを開く操作のみ可能。",
+    "",
+    "■ searchHistoryMax（任意・既定値: 5）",
+    "   サイドパネルの検索履歴タブに保持する件数の上限。",
+    "",
+    "■ fileHistoryMax（任意・既定値: 10）",
+    "   サイドパネルのファイルタブに保持する件数の上限。"
   ],
   "searchFolder": "D:\\Work\\Fuchu\\2026\\照会結果",
-  "depositSeizureListScript": "D:\\Work\\Fuchu\\2026\\deposit_seizure_list\\deposit_seizure_list.ps1"
+  "depositSeizureListScript": ""D:\Work\\Fuchu\\2026\\deposit_seizure_list_gui\\deposit_seizure_list.exe"",
+  "searchHistoryMax": 15,
+  "fileHistoryMax": 15
 }
