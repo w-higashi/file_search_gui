@@ -407,9 +407,10 @@ public class FileSearchApp : Application
         tabHistory.MouseDown += delegate { SwitchTab("history"); };
         tabFile.MouseDown += delegate { SwitchTab("file"); };
 
-        // --- 検索履歴タブ: クリックで即検索実行 ---
-        searchHistoryList.PreviewMouseUp += delegate
+        // --- 検索履歴タブ: 左クリックで即検索実行 ---
+        searchHistoryList.PreviewMouseUp += delegate(object s, MouseButtonEventArgs e)
         {
+            if (e.ChangedButton != MouseButton.Left) return;
             var idx = searchHistoryList.SelectedIndex;
             if (idx < 0 || idx >= searchHistory.Count) return;
             var query = searchHistory[idx];
@@ -613,7 +614,26 @@ public class FileSearchApp : Application
         };
         histMenu.Items.Add(histFolder);
 
+        histMenu.Items.Add(new Separator());
+        var histDelete = new MenuItem { Header = "削除" };
+        histDelete.Click += delegate { DeleteSelectedHistory(); };
+        histMenu.Items.Add(histDelete);
+        var histClearAll = new MenuItem { Header = "全て削除" };
+        histClearAll.Click += delegate { ClearAllHistory("file"); };
+        histMenu.Items.Add(histClearAll);
+
         fileHistoryList.ContextMenu = histMenu;
+
+        // --- 検索履歴タブ用 ---
+        var searchHistMenu = new ContextMenu();
+        var searchHistDelete = new MenuItem { Header = "削除" };
+        searchHistDelete.Click += delegate { DeleteSelectedHistory(); };
+        searchHistMenu.Items.Add(searchHistDelete);
+        var searchHistClearAll = new MenuItem { Header = "全て削除" };
+        searchHistClearAll.Click += delegate { ClearAllHistory("history"); };
+        searchHistMenu.Items.Add(searchHistClearAll);
+
+        searchHistoryList.ContextMenu = searchHistMenu;
     }
 
     // ==============================================================
@@ -1062,6 +1082,25 @@ public class FileSearchApp : Application
             var idx = fileHistoryList.SelectedIndex;
             if (idx < 0 || idx >= fileHistory.Count) return;
             fileHistory.RemoveAt(idx);
+            SaveHistory();
+            UpdateFileHistoryUI();
+        }
+    }
+
+    // サイドパネルの指定タブの履歴を全件削除
+    private void ClearAllHistory(string tab)
+    {
+        if (tab == "history")
+        {
+            if (searchHistory.Count == 0) return;
+            searchHistory.Clear();
+            SaveHistory();
+            UpdateSearchHistoryUI();
+        }
+        else
+        {
+            if (fileHistory.Count == 0) return;
+            fileHistory.Clear();
             SaveHistory();
             UpdateFileHistoryUI();
         }
