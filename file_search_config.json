@@ -19,7 +19,7 @@
     "   サイドパネルのファイルタブに保持する件数の上限。"
   ],
   "searchFolder": "D:\\Work\\Fuchu\\2026\\照会結果",
-  "depositSeizureListScript": "D:\Work\\Fuchu\\2026\\deposit_seizure_list_gui\\deposit_seizure_list.exe",
+  "depositSeizureListScript": "D:\\Work\\Fuchu\\2026\\deposit_seizure_list_gui\\deposit_seizure_list.exe",
   "searchHistoryMax": 15,
   "fileHistoryMax": 15
 }
