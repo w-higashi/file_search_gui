@@ -175,7 +175,6 @@ public class FileSearchApp : Application
     // --- UI要素 ---
     private Window window;
     private TextBox searchBox;
-    private Border searchBorder;               // 検索ボックスの外枠（ドロップダウンの PlacementTarget）
     private TextBlock searchPlaceholder;
     private Button searchButton;
     private ListView resultList;
@@ -183,10 +182,11 @@ public class FileSearchApp : Application
     private Button openButton;
     private Button addButton;                  // depositScript 未設定時は Collapsed
     private ListBox fileHistoryList;
+    private ListBox searchHistoryList;          // サイドパネル検索履歴タブ
+    private Border tabHistory, tabFile;        // サイドパネルのタブヘッダー
+    private TextBlock tabHistoryText, tabFileText;
     private TextBlock statusLeft;              // フッター左（件数表示）
     private TextBlock statusRight;             // フッター右（検索フォルダ表示）
-    private Popup searchDropdown;
-    private ListBox dropdownList;
 
     // --- 状態 ---
     private List<string> searchHistory = new List<string>();
@@ -195,8 +195,7 @@ public class FileSearchApp : Application
     private string currentSortColumn = "LastWriteTime";  // 現在のソート列
     private bool currentSortAscending = false;           // true=昇順, false=降順
     private bool persistHistory = true;                  // 永続化が有効か（読み書き失敗時に false に切り替わる）
-    private bool isInitialized = false;                  // 起動直後のドロップダウン抑制用
-    private System.Windows.Threading.DispatcherTimer dropdownCloseTimer;  // ホバー遅延閉じ用
+    private string activeTab = "file";                   // サイドパネルのアクティブタブ（"history" / "file"）
 
     // --- 定数 ---
     private const int SEARCH_HISTORY_MAX = 5;   // 検索履歴の上限件数
@@ -208,6 +207,7 @@ public class FileSearchApp : Application
     private static readonly SolidColorBrush BrushFolderFill  = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E8EEF4"));
     private static readonly SolidColorBrush BrushAccent      = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#005FB8"));
     private static readonly SolidColorBrush BrushSecondary   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#999999"));
+    private static readonly SolidColorBrush BrushTabInactive = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#777777"));
 
     // --- ソート列名のマッピング（UpdateSortIndicators 用） ---
     private static readonly Dictionary<string, string> SortColumnNames = new Dictionary<string, string>
@@ -231,6 +231,7 @@ public class FileSearchApp : Application
         BrushFolderFill.Freeze();
         BrushAccent.Freeze();
         BrushSecondary.Freeze();
+        BrushTabInactive.Freeze();
 
         var app = new FileSearchApp();
         app.Run();
@@ -277,12 +278,8 @@ public class FileSearchApp : Application
         SetupEvents();
         InitializeUI();
 
-        // 起動後に検索ボックスにフォーカス → isInitialized で起動時のドロップダウン表示を抑制
-        window.ContentRendered += delegate
-        {
-            searchBox.Focus();
-            isInitialized = true;
-        };
+        // 起動後に検索ボックスにフォーカス
+        window.ContentRendered += delegate { searchBox.Focus(); };
         window.Show();
     }
 
@@ -294,7 +291,6 @@ public class FileSearchApp : Application
     private void FindControls()
     {
         searchBox         = (TextBox)window.FindName("SearchBox");
-        searchBorder      = (Border)window.FindName("SearchBorder");
         searchPlaceholder = (TextBlock)window.FindName("SearchPlaceholder");
         searchButton      = (Button)window.FindName("SearchButton");
         resultList        = (ListView)window.FindName("ResultList");
@@ -302,10 +298,13 @@ public class FileSearchApp : Application
         openButton        = (Button)window.FindName("OpenButton");
         addButton         = (Button)window.FindName("AddButton");
         fileHistoryList   = (ListBox)window.FindName("FileHistoryList");
+        searchHistoryList = (ListBox)window.FindName("SearchHistoryList");
+        tabHistory        = (Border)window.FindName("TabHistory");
+        tabFile           = (Border)window.FindName("TabFile");
+        tabHistoryText    = (TextBlock)window.FindName("TabHistoryText");
+        tabFileText       = (TextBlock)window.FindName("TabFileText");
         statusLeft        = (TextBlock)window.FindName("StatusLeft");
         statusRight       = (TextBlock)window.FindName("StatusRight");
-        searchDropdown    = (Popup)window.FindName("SearchDropdown");
-        dropdownList      = (ListBox)window.FindName("DropdownList");
     }
 
     // ==============================================================
@@ -330,8 +329,9 @@ public class FileSearchApp : Application
             statusRight.ToolTip = string.Join("\n", config.SearchFolders);
         }
 
-        // ファイル履歴の表示
+        // 履歴の表示
         UpdateFileHistoryUI();
+        UpdateSearchHistoryUI();
 
         // ボタン初期状態（選択なし → 無効）
         openButton.IsEnabled = false;
@@ -357,83 +357,42 @@ public class FileSearchApp : Application
                 ? Visibility.Collapsed : Visibility.Visible;
         };
 
-        // Enter で検索実行、Escape でドロップダウンを閉じる
+        // Enter で検索実行
         searchBox.KeyDown += delegate(object s, KeyEventArgs e)
         {
             if (e.Key == Key.Return)
             {
-                CloseDropdown();
                 ExecuteSearch(searchBox.Text);
                 e.Handled = true;
-            }
-            else if (e.Key == Key.Escape)
-            {
-                CloseDropdown();
-                e.Handled = true;
-            }
-        };
-
-        // --- ドロップダウン（ホバー表示方式） ---
-        // 検索ボックスとドロップダウンの間のマウス移動でちらつかないよう
-        // DispatcherTimer（200ms）で遅延クローズする
-
-        dropdownCloseTimer = new System.Windows.Threading.DispatcherTimer();
-        dropdownCloseTimer.Interval = TimeSpan.FromMilliseconds(200);
-        dropdownCloseTimer.Tick += delegate
-        {
-            dropdownCloseTimer.Stop();
-            // まだどちらかにマウスが乗っていれば閉じない
-            var popupBorder = searchDropdown.Child as Border;
-            if (searchBorder.IsMouseOver) return;
-            if (popupBorder != null && popupBorder.IsMouseOver) return;
-            CloseDropdown();
-        };
-
-        // 検索ボックスにマウスが入ったら表示、離れたら遅延クローズ開始
-        searchBorder.MouseEnter += delegate
-        {
-            dropdownCloseTimer.Stop();
-            if (isInitialized) ShowDropdown();
-        };
-        searchBorder.MouseLeave += delegate { dropdownCloseTimer.Start(); };
-
-        // Popup 内の Border にも MouseEnter/Leave を設定（初回のみ）
-        bool popupEventsAttached = false;
-        searchDropdown.Opened += delegate
-        {
-            if (popupEventsAttached) return;
-            var popupBorder = searchDropdown.Child as Border;
-            if (popupBorder == null) return;
-            popupBorder.MouseEnter += delegate { dropdownCloseTimer.Stop(); };
-            popupBorder.MouseLeave += delegate { dropdownCloseTimer.Start(); };
-            popupEventsAttached = true;
-        };
-
-        // ドロップダウンの項目をクリック → テキストボックスに値をセットして検索実行
-        dropdownList.PreviewMouseUp += delegate(object s, MouseButtonEventArgs e)
-        {
-            var item = dropdownList.SelectedItem as string;
-            if (item != null)
-            {
-                searchBox.Text = item;
-                searchBox.CaretIndex = item.Length;
-                CloseDropdown();
-                ExecuteSearch(item);
             }
         };
 
         // --- 検索ボタン ---
-        searchButton.Click += delegate
+        searchButton.Click += delegate { ExecuteSearch(searchBox.Text); };
+
+        // --- サイドパネルのタブ切替 ---
+        tabHistory.MouseDown += delegate { SwitchTab("history"); };
+        tabFile.MouseDown += delegate { SwitchTab("file"); };
+
+        // --- 検索履歴タブ: クリックで即検索実行 ---
+        searchHistoryList.PreviewMouseUp += delegate
         {
-            CloseDropdown();
-            ExecuteSearch(searchBox.Text);
+            var idx = searchHistoryList.SelectedIndex;
+            if (idx < 0 || idx >= searchHistory.Count) return;
+            var query = searchHistory[idx];
+            searchBox.Text = query;
+            searchBox.CaretIndex = query.Length;
+            ExecuteSearch(query);
         };
 
         // --- 検索結果の選択（排他選択: サイドパネルの選択を解除） ---
         resultList.SelectionChanged += delegate
         {
             if (resultList.SelectedItem != null)
+            {
                 fileHistoryList.SelectedIndex = -1;
+                searchHistoryList.SelectedIndex = -1;
+            }
             UpdateButtonState();
         };
 
@@ -444,11 +403,14 @@ public class FileSearchApp : Application
             if (item != null) OpenFile(item.FullPath);
         };
 
-        // --- サイドパネルの選択（排他選択: メインパネルの選択を解除） ---
+        // --- ファイル履歴タブの選択（排他選択: メインパネルの選択を解除） ---
         fileHistoryList.SelectionChanged += delegate
         {
             if (fileHistoryList.SelectedItem != null)
+            {
                 resultList.SelectedIndex = -1;
+                searchHistoryList.SelectedIndex = -1;
+            }
             UpdateButtonState();
         };
 
@@ -457,6 +419,16 @@ public class FileSearchApp : Application
         {
             var entry = GetSelectedFileHistoryEntry();
             if (entry != null) OpenFile(entry.Path);
+        };
+
+        // --- 検索履歴タブの選択（排他選択、ボタンには影響しない） ---
+        searchHistoryList.SelectionChanged += delegate
+        {
+            if (searchHistoryList.SelectedItem != null)
+            {
+                resultList.SelectedIndex = -1;
+                fileHistoryList.SelectedIndex = -1;
+            }
         };
 
         // --- アクションボタン ---
@@ -633,29 +605,68 @@ public class FileSearchApp : Application
     }
 
     // ==============================================================
-    // ドロップダウン（検索履歴）
+    // サイドパネルのタブ切替
     // ==============================================================
 
-    // 検索履歴ドロップダウンを表示（履歴が空の場合は表示しない）
-    private void ShowDropdown()
+    // アクティブタブを切り替え、タブヘッダーの見た目とコンテンツの表示を更新
+    private void SwitchTab(string tab)
     {
-        if (searchHistory.Count == 0) return;
-        dropdownList.Items.Clear();
-        foreach (var item in searchHistory)
-            dropdownList.Items.Add(item);
+        activeTab = tab;
+        bool isHistory = tab == "history";
 
-        // ドロップダウンの幅を検索ボックスに合わせる
-        var border = searchDropdown.Child as Border;
-        if (border != null && searchBorder.ActualWidth > 0)
-            border.Width = searchBorder.ActualWidth;
+        // タブヘッダーの見た目を切替
+        tabHistory.BorderBrush    = isHistory ? BrushAccent : Brushes.Transparent;
+        tabHistoryText.Foreground = isHistory ? BrushAccent : BrushTabInactive;
+        tabHistoryText.FontWeight = isHistory ? FontWeights.Medium : FontWeights.Normal;
+        tabFile.BorderBrush       = isHistory ? Brushes.Transparent : BrushAccent;
+        tabFileText.Foreground    = isHistory ? BrushTabInactive : BrushAccent;
+        tabFileText.FontWeight    = isHistory ? FontWeights.Normal : FontWeights.Medium;
 
-        searchDropdown.IsOpen = true;
+        // タブコンテンツの表示切替
+        searchHistoryList.Visibility = isHistory ? Visibility.Visible : Visibility.Collapsed;
+        fileHistoryList.Visibility   = isHistory ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    // 検索履歴ドロップダウンを閉じる
-    private void CloseDropdown()
+    // サイドパネルの検索履歴リストを再描画
+    private void UpdateSearchHistoryUI()
     {
-        searchDropdown.IsOpen = false;
+        searchHistoryList.Items.Clear();
+        foreach (var query in searchHistory)
+        {
+            // 検索アイコン（Canvas Path）
+            var icon = new Canvas { Width = 12, Height = 12, Margin = new Thickness(0, 1, 8, 0) };
+            var ellipse = new System.Windows.Shapes.Ellipse
+            {
+                Width = 7, Height = 7,
+                Stroke = BrushSecondary, StrokeThickness = 1.2,
+                Fill = Brushes.Transparent
+            };
+            Canvas.SetLeft(ellipse, 0);
+            Canvas.SetTop(ellipse, 0);
+            icon.Children.Add(ellipse);
+            icon.Children.Add(new System.Windows.Shapes.Line
+            {
+                X1 = 6, Y1 = 6, X2 = 10, Y2 = 10,
+                Stroke = BrushSecondary, StrokeThickness = 1.2
+            });
+
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            sp.Children.Add(icon);
+            sp.Children.Add(new TextBlock
+            {
+                Text = query,
+                FontSize = 12,
+                FontFamily = new FontFamily("Consolas"),
+                Foreground = BrushAccent
+            });
+
+            var item = new ListBoxItem
+            {
+                Content = sp,
+                Padding = new Thickness(12, 8, 12, 8)
+            };
+            searchHistoryList.Items.Add(item);
+        }
     }
 
     // ==============================================================
@@ -677,6 +688,7 @@ public class FileSearchApp : Application
         if (searchHistory.Count > SEARCH_HISTORY_MAX)
             searchHistory.RemoveAt(SEARCH_HISTORY_MAX);
         SaveHistory();
+        UpdateSearchHistoryUI();
 
         // --- 検索実行 ---
         // EnumerateFiles で遅延列挙（GetFiles と異なり全件取得を待たず順次処理可能）
@@ -951,14 +963,25 @@ public class FileSearchApp : Application
         catch { /* Explorer の起動失敗は無視 */ }
     }
 
-    // サイドパネルで選択中のファイル履歴を削除
+    // サイドパネルのアクティブタブで選択中の履歴を削除
     private void DeleteSelectedHistory()
     {
-        var idx = fileHistoryList.SelectedIndex;
-        if (idx < 0 || idx >= fileHistory.Count) return;
-        fileHistory.RemoveAt(idx);
-        SaveHistory();
-        UpdateFileHistoryUI();
+        if (activeTab == "history")
+        {
+            var idx = searchHistoryList.SelectedIndex;
+            if (idx < 0 || idx >= searchHistory.Count) return;
+            searchHistory.RemoveAt(idx);
+            SaveHistory();
+            UpdateSearchHistoryUI();
+        }
+        else
+        {
+            var idx = fileHistoryList.SelectedIndex;
+            if (idx < 0 || idx >= fileHistory.Count) return;
+            fileHistory.RemoveAt(idx);
+            SaveHistory();
+            UpdateFileHistoryUI();
+        }
     }
 
     // ==============================================================
@@ -1425,29 +1448,6 @@ public class FileSearchApp : Application
             </Setter>
         </Style>
 
-        <!-- 検索履歴ドロップダウン ListBoxItem -->
-        <Style x:Key='DropdownItem' TargetType='ListBoxItem'>
-            <Setter Property='Padding' Value='12,7'/>
-            <Setter Property='FontSize' Value='13'/>
-            <Setter Property='FontFamily' Value='Consolas'/>
-            <Setter Property='Cursor' Value='Hand'/>
-            <Setter Property='Foreground' Value='#005FB8'/>
-            <Setter Property='Template'>
-                <Setter.Value>
-                    <ControlTemplate TargetType='ListBoxItem'>
-                        <Border x:Name='bg' Padding='{TemplateBinding Padding}'
-                                Background='Transparent'>
-                            <ContentPresenter/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property='IsMouseOver' Value='True'>
-                                <Setter TargetName='bg' Property='Background' Value='#E8F0FE'/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
     </Window.Resources>
 
     <DockPanel>
@@ -1486,7 +1486,7 @@ public class FileSearchApp : Application
                         <ColumnDefinition Width='Auto'/>
                     </Grid.ColumnDefinitions>
 
-                    <Border x:Name='SearchBorder' Grid.Column='0' Background='White'
+                    <Border Grid.Column='0' Background='White'
                             BorderBrush='#D0D0D0' BorderThickness='1' CornerRadius='4'>
                         <Grid>
                             <TextBlock x:Name='SearchPlaceholder'
@@ -1507,30 +1507,6 @@ public class FileSearchApp : Application
                         </Grid>
                     </Border>
 
-                    <!-- 検索履歴ドロップダウン -->
-                    <Popup x:Name='SearchDropdown'
-                           PlacementTarget='{Binding ElementName=SearchBorder}'
-                           Placement='Bottom' StaysOpen='True'
-                           AllowsTransparency='True'>
-                        <Border Background='White' BorderBrush='#D0D0D0'
-                                BorderThickness='1' CornerRadius='0,0,4,4'
-                                Margin='0,-1,0,0'>
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius='8' ShadowDepth='2'
-                                                  Opacity='0.12' Color='#000000'/>
-                            </Border.Effect>
-                            <DockPanel>
-                                <Border DockPanel.Dock='Top' Padding='12,6'
-                                        BorderBrush='#F0F0F0' BorderThickness='0,0,0,1'>
-                                    <TextBlock Text='検索履歴' FontSize='10'
-                                               Foreground='#999999'/>
-                                </Border>
-                                <ListBox x:Name='DropdownList' BorderThickness='0'
-                                         Background='Transparent'
-                                         ItemContainerStyle='{StaticResource DropdownItem}'/>
-                            </DockPanel>
-                        </Border>
-                    </Popup>
 
                     <Button x:Name='SearchButton' Grid.Column='2'
                             Style='{StaticResource AB}'>
@@ -1639,28 +1615,57 @@ public class FileSearchApp : Application
                 </Border>
             </DockPanel>
 
-            <!-- === 右カラム（サイドパネル：ボタン下端まで） === -->
+            <!-- === 右カラム（サイドパネル） === -->
             <Border Grid.Column='2' Background='White' BorderBrush='#E0E0E0'
                     BorderThickness='1' CornerRadius='4'>
                 <DockPanel>
-                    <Border DockPanel.Dock='Top' Padding='12,8'
-                            Background='#FAFAFA'
-                            BorderBrush='#E0E0E0' BorderThickness='0,0,0,1'>
-                            <TextBlock Text='最近開いたファイル' FontSize='11'
-                                       Foreground='#555555'/>
-                    </Border>
-                    <ListBox x:Name='FileHistoryList' BorderThickness='0'
-                             Background='Transparent'
-                             ItemContainerStyle='{StaticResource HistoryItem}'
-                             ScrollViewer.HorizontalScrollBarVisibility='Disabled'>
-                        <ListBox.Template>
-                            <ControlTemplate TargetType='ListBox'>
-                                <ScrollViewer Padding='0' Focusable='False'>
-                                    <ItemsPresenter/>
-                                </ScrollViewer>
-                            </ControlTemplate>
-                        </ListBox.Template>
-                    </ListBox>
+                    <!-- タブヘッダー（アンダーライン方式） -->
+                    <Grid DockPanel.Dock='Top' Background='#FAFAFA'>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width='*'/><ColumnDefinition Width='*'/>
+                        </Grid.ColumnDefinitions>
+                        <Border x:Name='TabHistory' Grid.Column='0' Cursor='Hand'
+                                Padding='4,8,4,6' BorderThickness='0,0,0,2'
+                                BorderBrush='Transparent'>
+                            <TextBlock x:Name='TabHistoryText' Text='検索履歴'
+                                       FontSize='11' Foreground='#777'
+                                       HorizontalAlignment='Center'/>
+                        </Border>
+                        <Border x:Name='TabFile' Grid.Column='1' Cursor='Hand'
+                                Padding='4,8,4,6' BorderThickness='0,0,0,2'
+                                BorderBrush='#005FB8'>
+                            <TextBlock x:Name='TabFileText' Text='ファイル'
+                                       FontSize='11' Foreground='#005FB8'
+                                       FontWeight='Medium' HorizontalAlignment='Center'/>
+                        </Border>
+                    </Grid>
+                    <!-- タブコンテンツ（Visibility で切替） -->
+                    <Grid>
+                        <ListBox x:Name='SearchHistoryList' BorderThickness='0'
+                                 Background='Transparent' Visibility='Collapsed'
+                                 ItemContainerStyle='{StaticResource HistoryItem}'
+                                 ScrollViewer.HorizontalScrollBarVisibility='Disabled'>
+                            <ListBox.Template>
+                                <ControlTemplate TargetType='ListBox'>
+                                    <ScrollViewer Padding='0' Focusable='False'>
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </ControlTemplate>
+                            </ListBox.Template>
+                        </ListBox>
+                        <ListBox x:Name='FileHistoryList' BorderThickness='0'
+                                 Background='Transparent'
+                                 ItemContainerStyle='{StaticResource HistoryItem}'
+                                 ScrollViewer.HorizontalScrollBarVisibility='Disabled'>
+                            <ListBox.Template>
+                                <ControlTemplate TargetType='ListBox'>
+                                    <ScrollViewer Padding='0' Focusable='False'>
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </ControlTemplate>
+                            </ListBox.Template>
+                        </ListBox>
+                    </Grid>
                 </DockPanel>
             </Border>
         </Grid>
