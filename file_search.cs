@@ -16,6 +16,7 @@
 // ＜必須＞
 // - file_search.cs  （ソースコード）
 // - file_search_config.json （設定ファイル）
+// - file_search.ico （アプリケーションアイコン）
 // - build.bat （ビルドスクリプト）
 // ==============================================================================
 
@@ -1011,7 +1012,8 @@ public class FileSearchApp : Application
         if (config.DepositScript == null) return;
 
         // deposit_seizure_list が既に起動中の場合は競合防止のため中断
-        if (Process.GetProcessesByName("deposit_seizure_list").Length > 0)
+        var depositExeName = System.IO.Path.GetFileNameWithoutExtension(config.DepositScript);
+        if (Process.GetProcessesByName(depositExeName).Length > 0)
         {
             MessageBox.Show(
                 "差押予定一覧作成ツールが起動中です。\n処理が完了してから再度実行してください。",
