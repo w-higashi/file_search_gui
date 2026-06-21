@@ -177,6 +177,7 @@ public class FileSearchApp : Application
     private TextBox searchBox;
     private TextBlock searchPlaceholder;
     private Button searchButton;
+    private Button clearButton;                // 検索ボックスの × クリアボタン
     private ListView resultList;
     private TextBlock resultEmptyMessage;       // 0件時・未検索時のメッセージ
     private Button openButton;
@@ -293,6 +294,7 @@ public class FileSearchApp : Application
         searchBox         = (TextBox)window.FindName("SearchBox");
         searchPlaceholder = (TextBlock)window.FindName("SearchPlaceholder");
         searchButton      = (Button)window.FindName("SearchButton");
+        clearButton       = (Button)window.FindName("ClearButton");
         resultList        = (ListView)window.FindName("ResultList");
         resultEmptyMessage = (TextBlock)window.FindName("ResultEmptyMessage");
         openButton        = (Button)window.FindName("OpenButton");
@@ -350,11 +352,12 @@ public class FileSearchApp : Application
     {
         // --- 検索ボックス ---
 
-        // プレースホルダの表示切替
+        // プレースホルダ・クリアボタンの表示切替
         searchBox.TextChanged += delegate
         {
-            searchPlaceholder.Visibility = searchBox.Text.Length > 0
-                ? Visibility.Collapsed : Visibility.Visible;
+            bool hasText = searchBox.Text.Length > 0;
+            searchPlaceholder.Visibility = hasText ? Visibility.Collapsed : Visibility.Visible;
+            clearButton.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
         };
 
         // Enter で検索実行
@@ -369,6 +372,20 @@ public class FileSearchApp : Application
 
         // --- 検索ボタン ---
         searchButton.Click += delegate { ExecuteSearch(searchBox.Text); };
+
+        // --- クリアボタン（検索ボックス内 ×）---
+        clearButton.Click += delegate
+        {
+            searchBox.Text = "";
+            currentResults.Clear();
+            resultList.ItemsSource = null;
+            resultEmptyMessage.Text = "宛名番号を入力して検索してください";
+            resultEmptyMessage.Visibility = Visibility.Visible;
+            statusLeft.Text = "";
+            openButton.IsEnabled = false;
+            addButton.IsEnabled = false;
+            searchBox.Focus();
+        };
 
         // --- サイドパネルのタブ切替 ---
         tabHistory.MouseDown += delegate { SwitchTab("history"); };
@@ -1502,8 +1519,36 @@ public class FileSearchApp : Application
                                       Stroke='#999999' StrokeThickness='1.5'/>
                             </Canvas>
                             <TextBox x:Name='SearchBox' FontSize='13' FontFamily='Consolas'
-                                     Padding='28,8,8,8' BorderThickness='0' Background='Transparent'
+                                     Padding='28,8,28,8' BorderThickness='0' Background='Transparent'
                                      VerticalContentAlignment='Center'/>
+                            <Button x:Name='ClearButton' HorizontalAlignment='Right'
+                                    VerticalAlignment='Center' Margin='0,0,6,0'
+                                    Visibility='Collapsed' Cursor='Hand'
+                                    Focusable='False'>
+                                <Button.Template>
+                                    <ControlTemplate TargetType='Button'>
+                                        <Border x:Name='bg' Width='20' Height='20'
+                                                CornerRadius='10' Background='#E0E0E0'>
+                                            <Canvas Width='10' Height='10'
+                                                    HorizontalAlignment='Center' VerticalAlignment='Center'>
+                                                <Line x:Name='l1' X1='1' Y1='1' X2='9' Y2='9'
+                                                      Stroke='#777' StrokeThickness='1.5'
+                                                      StrokeStartLineCap='Round' StrokeEndLineCap='Round'/>
+                                                <Line x:Name='l2' X1='9' Y1='1' X2='1' Y2='9'
+                                                      Stroke='#777' StrokeThickness='1.5'
+                                                      StrokeStartLineCap='Round' StrokeEndLineCap='Round'/>
+                                            </Canvas>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property='IsMouseOver' Value='True'>
+                                                <Setter TargetName='bg' Property='Background' Value='#CCC'/>
+                                                <Setter TargetName='l1' Property='Stroke' Value='#555'/>
+                                                <Setter TargetName='l2' Property='Stroke' Value='#555'/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
                         </Grid>
                     </Border>
 
