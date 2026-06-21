@@ -179,7 +179,6 @@ public class FileSearchApp : Application
     private TextBlock searchPlaceholder;
     private Button searchButton;
     private ListView resultList;
-    private TextBlock resultHeader;
     private TextBlock resultEmptyMessage;       // 0件時・未検索時のメッセージ
     private Button openButton;
     private Button addButton;                  // depositScript 未設定時は Collapsed
@@ -299,7 +298,6 @@ public class FileSearchApp : Application
         searchPlaceholder = (TextBlock)window.FindName("SearchPlaceholder");
         searchButton      = (Button)window.FindName("SearchButton");
         resultList        = (ListView)window.FindName("ResultList");
-        resultHeader      = (TextBlock)window.FindName("ResultHeader");
         resultEmptyMessage = (TextBlock)window.FindName("ResultEmptyMessage");
         openButton        = (Button)window.FindName("OpenButton");
         addButton         = (Button)window.FindName("AddButton");
@@ -733,14 +731,12 @@ public class FileSearchApp : Application
         int count = currentResults.Count;
         if (count == 0)
         {
-            resultHeader.Text = "検索結果";
             resultEmptyMessage.Text = "該当するファイルが見つかりませんでした";
             resultEmptyMessage.Visibility = Visibility.Visible;
             statusLeft.Text = "該当するファイルが見つかりませんでした";
         }
         else
         {
-            resultHeader.Text = "検索結果";
             resultEmptyMessage.Visibility = Visibility.Collapsed;
             statusLeft.Text = "\u2713 " + count + " 件のファイルが見つかりました";
         }
@@ -1575,8 +1571,8 @@ public class FileSearchApp : Application
                         <Border DockPanel.Dock='Top' Padding='14,8'
                                 Background='#FAFAFA'
                                 BorderBrush='#E0E0E0' BorderThickness='0,0,0,1'>
-                            <TextBlock x:Name='ResultHeader' Text='検索結果'
-                                       FontSize='11' Foreground='#555555'/>
+                            <TextBlock Text='&#x2261; 検索結果'
+                                       FontSize='11' Foreground='#005FB8' FontWeight='Medium'/>
                         </Border>
 
                         <Grid>
@@ -1588,37 +1584,47 @@ public class FileSearchApp : Application
 
                             <ListView x:Name='ResultList' BorderThickness='0'
                                       Background='White' FontSize='12'
-                                      FontFamily='Consolas'
                                       SelectionMode='Extended'
                                       ItemContainerStyle='{StaticResource ResultItem}'>
                                 <ListView.View>
                                     <GridView>
-                                        <GridViewColumn Header='ファイル名' Width='240'
-                                            DisplayMemberBinding='{Binding FileName}'>
+                                        <GridViewColumn Header='ファイル名' Width='240'>
+                                            <GridViewColumn.CellTemplate><DataTemplate>
+                                                <TextBlock Text='{Binding FileName}' ToolTip='{Binding FileName}'
+                                                           TextTrimming='CharacterEllipsis' Margin='12,0,4,0'/>
+                                            </DataTemplate></GridViewColumn.CellTemplate>
                                             <GridViewColumn.HeaderContainerStyle>
                                                 <Style TargetType='GridViewColumnHeader' BasedOn='{StaticResource {x:Type GridViewColumnHeader}}'>
                                                     <Setter Property='Tag' Value='FileName'/>
                                                 </Style>
                                             </GridViewColumn.HeaderContainerStyle>
                                         </GridViewColumn>
-                                        <GridViewColumn Header='フォルダ' Width='180'
-                                            DisplayMemberBinding='{Binding FolderPath}'>
+                                        <GridViewColumn Header='フォルダ' Width='180'>
+                                            <GridViewColumn.CellTemplate><DataTemplate>
+                                                <TextBlock Text='{Binding FolderPath}' ToolTip='{Binding FolderPath}'
+                                                           TextTrimming='CharacterEllipsis' Margin='12,0,4,0'/>
+                                            </DataTemplate></GridViewColumn.CellTemplate>
                                             <GridViewColumn.HeaderContainerStyle>
                                                 <Style TargetType='GridViewColumnHeader' BasedOn='{StaticResource {x:Type GridViewColumnHeader}}'>
                                                     <Setter Property='Tag' Value='FolderPath'/>
                                                 </Style>
                                             </GridViewColumn.HeaderContainerStyle>
                                         </GridViewColumn>
-                                        <GridViewColumn Header='更新日 ▼' Width='130'
-                                            DisplayMemberBinding='{Binding LastWrite}'>
+                                        <GridViewColumn Header='更新日 ▼' Width='130'>
+                                            <GridViewColumn.CellTemplate><DataTemplate>
+                                                <TextBlock Text='{Binding LastWrite}' HorizontalAlignment='Center'
+                                                           FontFamily='Consolas'/>
+                                            </DataTemplate></GridViewColumn.CellTemplate>
                                             <GridViewColumn.HeaderContainerStyle>
                                                 <Style TargetType='GridViewColumnHeader' BasedOn='{StaticResource {x:Type GridViewColumnHeader}}'>
                                                     <Setter Property='Tag' Value='LastWriteTime'/>
                                                 </Style>
                                             </GridViewColumn.HeaderContainerStyle>
                                         </GridViewColumn>
-                                        <GridViewColumn Header='サイズ' Width='80'
-                                            DisplayMemberBinding='{Binding Size}'>
+                                        <GridViewColumn Header='サイズ' Width='80'>
+                                            <GridViewColumn.CellTemplate><DataTemplate>
+                                                <TextBlock Text='{Binding Size}' HorizontalAlignment='Center'/>
+                                            </DataTemplate></GridViewColumn.CellTemplate>
                                             <GridViewColumn.HeaderContainerStyle>
                                                 <Style TargetType='GridViewColumnHeader' BasedOn='{StaticResource {x:Type GridViewColumnHeader}}'>
                                                     <Setter Property='Tag' Value='Size'/>
