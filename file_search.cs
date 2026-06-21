@@ -1283,7 +1283,7 @@ public class FileSearchApp : Application
         // depositScript の有無に応じてボタンの XAML を動的生成
         string addButtonXaml = config.DepositScript != null
             ? @"<Button x:Name='AddButton' Grid.Column='2'
-                        Style='{StaticResource SuccessButton}' IsEnabled='False'>
+                        Style='{StaticResource AB}' IsEnabled='False'>
                     <StackPanel Orientation='Horizontal'>
                         <Canvas Width='14' Height='14' Margin='0,0,4,0'>
                             <Path Data='M7,2 L7,12 M2,7 L12,7'
@@ -1293,7 +1293,7 @@ public class FileSearchApp : Application
                     </StackPanel>
                 </Button>"
             : @"<Button x:Name='AddButton' Grid.Column='2'
-                        Visibility='Collapsed' Style='{StaticResource SuccessButton}'/>";
+                        Visibility='Collapsed' Style='{StaticResource AB}'/>";
 
         // depositScript 未設定時はボタン列を1列にまとめる
         string buttonColumns = config.DepositScript != null
@@ -1305,7 +1305,7 @@ public class FileSearchApp : Application
     xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
     xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'
     Title='預貯金照会結果 検索ツール'
-    Width='1000' Height='600' MinWidth='800' MinHeight='480'
+    Width='1000' Height='700' MinWidth='900' MinHeight='520'
     WindowStartupLocation='CenterScreen'
     Background='#F9F9F9' FontFamily='Meiryo UI'
     UseLayoutRounding='True'
@@ -1314,65 +1314,95 @@ public class FileSearchApp : Application
     TextOptions.TextRenderingMode='ClearType'>
 
     <Window.Resources>
-        <!-- アクセントボタン（青） -->
-        <Style x:Key='AccentButton' TargetType='Button'>
-            <Setter Property='Background' Value='#005FB8'/>
-            <Setter Property='Foreground' Value='White'/>
-            <Setter Property='FontSize' Value='12'/>
-            <Setter Property='Padding' Value='16,8'/>
-            <Setter Property='Cursor' Value='Hand'/>
-            <Setter Property='BorderThickness' Value='0'/>
-            <Setter Property='Template'>
-                <Setter.Value>
-                    <ControlTemplate TargetType='Button'>
-                        <Border x:Name='border' Background='{TemplateBinding Background}'
-                                CornerRadius='4' Padding='{TemplateBinding Padding}'>
-                            <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property='IsMouseOver' Value='True'>
-                                <Setter TargetName='border' Property='Background' Value='#004FA0'/>
-                            </Trigger>
-                            <Trigger Property='IsEnabled' Value='False'>
-                                <Setter TargetName='border' Property='Background' Value='#CCCCCC'/>
-                                <Setter Property='Foreground' Value='#999999'/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
+        <!-- アクセントボタン（プライマリ: 青背景） -->
+        <Style x:Key='AB' TargetType='Button'>
+            <Setter Property='Background' Value='#005FB8'/><Setter Property='Foreground' Value='White'/>
+            <Setter Property='FontSize' Value='12'/><Setter Property='Padding' Value='16,8'/>
+            <Setter Property='Cursor' Value='Hand'/><Setter Property='BorderThickness' Value='0'/>
+            <Setter Property='Template'><Setter.Value>
+                <ControlTemplate TargetType='Button'>
+                    <Border x:Name='bd' Background='{TemplateBinding Background}'
+                            CornerRadius='4' Padding='{TemplateBinding Padding}'>
+                        <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property='IsMouseOver' Value='True'>
+                            <Setter TargetName='bd' Property='Background' Value='#004FA0'/></Trigger>
+                        <Trigger Property='IsEnabled' Value='False'>
+                            <Setter TargetName='bd' Property='Background' Value='#CCC'/>
+                            <Setter Property='Foreground' Value='#999'/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value></Setter>
         </Style>
 
-        <!-- 成功ボタン（緑） -->
-        <Style x:Key='SuccessButton' TargetType='Button'>
-            <Setter Property='Background' Value='#107C41'/>
-            <Setter Property='Foreground' Value='White'/>
-            <Setter Property='FontSize' Value='12'/>
-            <Setter Property='Padding' Value='16,8'/>
-            <Setter Property='Cursor' Value='Hand'/>
-            <Setter Property='BorderThickness' Value='0'/>
-            <Setter Property='Template'>
-                <Setter.Value>
-                    <ControlTemplate TargetType='Button'>
-                        <Border x:Name='border' Background='{TemplateBinding Background}'
-                                CornerRadius='4' Padding='{TemplateBinding Padding}'>
-                            <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property='IsMouseOver' Value='True'>
-                                <Setter TargetName='border' Property='Background' Value='#0B6331'/>
-                            </Trigger>
-                            <Trigger Property='IsEnabled' Value='False'>
-                                <Setter TargetName='border' Property='Background' Value='#CCCCCC'/>
-                                <Setter Property='Foreground' Value='#999999'/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
+        <!-- ゴーストボタン（セカンダリ: 白背景＋ボーダー） -->
+        <Style x:Key='GB' TargetType='Button'>
+            <Setter Property='Background' Value='White'/><Setter Property='Foreground' Value='#555'/>
+            <Setter Property='FontSize' Value='12'/><Setter Property='Padding' Value='16,8'/>
+            <Setter Property='Cursor' Value='Hand'/><Setter Property='BorderBrush' Value='#D0D0D0'/><Setter Property='BorderThickness' Value='1'/>
+            <Setter Property='Template'><Setter.Value>
+                <ControlTemplate TargetType='Button'>
+                    <Border x:Name='bd' Background='{TemplateBinding Background}'
+                            BorderBrush='{TemplateBinding BorderBrush}'
+                            BorderThickness='{TemplateBinding BorderThickness}'
+                            CornerRadius='4' Padding='{TemplateBinding Padding}'>
+                        <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property='IsMouseOver' Value='True'>
+                            <Setter TargetName='bd' Property='Background' Value='#EBF1F8'/></Trigger>
+                        <Trigger Property='IsEnabled' Value='False'>
+                            <Setter TargetName='bd' Property='Background' Value='#F5F5F5'/>
+                            <Setter Property='Foreground' Value='#CCC'/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value></Setter>
         </Style>
 
-        <!-- サイドパネルの ListBoxItem スタイル -->
+        <!-- GridViewColumnHeader: フラットデザイン（中央揃え） -->
+        <Style TargetType='GridViewColumnHeader'>
+            <Setter Property='Background' Value='#F5F7FA'/>
+            <Setter Property='Foreground' Value='#777'/>
+            <Setter Property='FontSize' Value='11'/>
+            <Setter Property='Padding' Value='8,7'/>
+            <Setter Property='HorizontalContentAlignment' Value='Center'/>
+            <Setter Property='Template'><Setter.Value>
+                <ControlTemplate TargetType='GridViewColumnHeader'>
+                    <Border Background='{TemplateBinding Background}'
+                            BorderBrush='#E8E8E8' BorderThickness='0,0,0,1'
+                            Padding='{TemplateBinding Padding}'>
+                        <ContentPresenter HorizontalAlignment='{TemplateBinding HorizontalContentAlignment}'
+                                          VerticalAlignment='Center'/></Border>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+
+        <!-- 検索結果 ListViewItem: アクセントバー＋ホバー/選択 -->
+        <Style x:Key='ResultItem' TargetType='ListViewItem'>
+            <Setter Property='Cursor' Value='Hand'/>
+            <Setter Property='Foreground' Value='#333'/>
+            <Setter Property='HorizontalContentAlignment' Value='Stretch'/>
+            <Setter Property='Padding' Value='0'/><Setter Property='Margin' Value='0'/>
+            <Setter Property='Template'><Setter.Value>
+                <ControlTemplate TargetType='ListViewItem'>
+                    <Grid>
+                        <Border x:Name='rowBd' Background='White'
+                                BorderBrush='#F0F0F0' BorderThickness='0,0,0,1'>
+                            <GridViewRowPresenter VerticalAlignment='Center'
+                                Margin='0,7,0,7'/></Border>
+                        <Border x:Name='accent' HorizontalAlignment='Left'
+                                Width='3' Background='Transparent'/></Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property='IsMouseOver' Value='True'>
+                            <Setter TargetName='rowBd' Property='Background' Value='#F0F4F8'/></Trigger>
+                        <Trigger Property='IsSelected' Value='True'>
+                            <Setter TargetName='accent' Property='Background' Value='#005FB8'/>
+                            <Setter TargetName='rowBd' Property='Background' Value='#E8F0FE'/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+
+        <!-- サイドパネル ListBoxItem -->
         <Style x:Key='HistoryItem' TargetType='ListBoxItem'>
             <Setter Property='HorizontalContentAlignment' Value='Stretch'/>
             <Setter Property='Padding' Value='0'/>
@@ -1399,7 +1429,7 @@ public class FileSearchApp : Application
             </Setter>
         </Style>
 
-        <!-- ドロップダウンの ListBoxItem スタイル -->
+        <!-- 検索履歴ドロップダウン ListBoxItem -->
         <Style x:Key='DropdownItem' TargetType='ListBoxItem'>
             <Setter Property='Padding' Value='12,7'/>
             <Setter Property='FontSize' Value='13'/>
@@ -1426,14 +1456,14 @@ public class FileSearchApp : Application
 
     <DockPanel>
         <!-- ============ ヘッダー ============ -->
-        <Border DockPanel.Dock='Top' Background='#005FB8' Padding='20,12'>
+        <Border DockPanel.Dock='Top' Background='#005FB8' Padding='18,10'>
             <TextBlock Text='預貯金照会結果 検索ツール'
-                       FontSize='14' FontWeight='Medium' Foreground='White'/>
+                       FontSize='13' FontWeight='Medium' Foreground='White'/>
         </Border>
 
         <!-- ============ フッター ============ -->
         <Border DockPanel.Dock='Bottom' Background='#F0F0F0'
-                BorderBrush='#E0E0E0' BorderThickness='0,1,0,0' Padding='20,5'>
+                BorderBrush='#E0E0E0' BorderThickness='0,1,0,0' Padding='18,4'>
             <DockPanel>
                 <TextBlock x:Name='StatusRight' DockPanel.Dock='Right'
                            FontSize='11' Foreground='#666666'/>
@@ -1442,7 +1472,7 @@ public class FileSearchApp : Application
         </Border>
 
         <!-- ============ メインエリア ============ -->
-        <Grid Margin='16,16,16,12'>
+        <Grid Margin='18,14,18,12'>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width='*'/>
                 <ColumnDefinition Width='12'/>
@@ -1507,7 +1537,7 @@ public class FileSearchApp : Application
                     </Popup>
 
                     <Button x:Name='SearchButton' Grid.Column='2'
-                            Style='{StaticResource AccentButton}'>
+                            Style='{StaticResource AB}'>
                         <StackPanel Orientation='Horizontal'>
                             <Canvas Width='14' Height='14' Margin='0,0,4,0'>
                                 <Ellipse Canvas.Left='1' Canvas.Top='1' Width='8' Height='8'
@@ -1526,11 +1556,11 @@ public class FileSearchApp : Application
                         " + buttonColumns + @"
                     </Grid.ColumnDefinitions>
                     <Button x:Name='OpenButton' Grid.Column='0'
-                            Style='{StaticResource AccentButton}' IsEnabled='False'>
+                            Style='{StaticResource GB}' IsEnabled='False'>
                         <StackPanel Orientation='Horizontal'>
                             <Canvas Width='14' Height='14' Margin='0,0,4,0'>
                                 <Path Data='M3,2 L3,12 L11,12 L11,6 M7,2 L12,2 L12,7 M12,2 L6,8'
-                                      Stroke='White' StrokeThickness='1.3' Fill='Transparent'/>
+                                      Stroke='#555' StrokeThickness='1.3' Fill='Transparent'/>
                             </Canvas>
                             <TextBlock Text='ファイルを開く' VerticalAlignment='Center'/>
                         </StackPanel>
@@ -1557,15 +1587,16 @@ public class FileSearchApp : Application
                                        Margin='0,40,0,0'/>
 
                             <ListView x:Name='ResultList' BorderThickness='0'
-                                      Background='Transparent' FontSize='13'
+                                      Background='White' FontSize='12'
                                       FontFamily='Consolas'
-                                      SelectionMode='Extended'>
+                                      SelectionMode='Extended'
+                                      ItemContainerStyle='{StaticResource ResultItem}'>
                                 <ListView.View>
                                     <GridView>
-                                        <GridViewColumn Header='ファイル名 ' Width='240'
+                                        <GridViewColumn Header='ファイル名' Width='240'
                                             DisplayMemberBinding='{Binding FileName}'>
                                             <GridViewColumn.HeaderContainerStyle>
-                                                <Style TargetType='GridViewColumnHeader'>
+                                                <Style TargetType='GridViewColumnHeader' BasedOn='{StaticResource {x:Type GridViewColumnHeader}}'>
                                                     <Setter Property='Tag' Value='FileName'/>
                                                 </Style>
                                             </GridViewColumn.HeaderContainerStyle>
@@ -1573,23 +1604,23 @@ public class FileSearchApp : Application
                                         <GridViewColumn Header='フォルダ' Width='180'
                                             DisplayMemberBinding='{Binding FolderPath}'>
                                             <GridViewColumn.HeaderContainerStyle>
-                                                <Style TargetType='GridViewColumnHeader'>
+                                                <Style TargetType='GridViewColumnHeader' BasedOn='{StaticResource {x:Type GridViewColumnHeader}}'>
                                                     <Setter Property='Tag' Value='FolderPath'/>
                                                 </Style>
                                             </GridViewColumn.HeaderContainerStyle>
                                         </GridViewColumn>
-                                        <GridViewColumn Header='更新日 ▼' Width='120'
+                                        <GridViewColumn Header='更新日 ▼' Width='130'
                                             DisplayMemberBinding='{Binding LastWrite}'>
                                             <GridViewColumn.HeaderContainerStyle>
-                                                <Style TargetType='GridViewColumnHeader'>
+                                                <Style TargetType='GridViewColumnHeader' BasedOn='{StaticResource {x:Type GridViewColumnHeader}}'>
                                                     <Setter Property='Tag' Value='LastWriteTime'/>
                                                 </Style>
                                             </GridViewColumn.HeaderContainerStyle>
                                         </GridViewColumn>
-                                        <GridViewColumn Header='サイズ' Width='70'
+                                        <GridViewColumn Header='サイズ' Width='80'
                                             DisplayMemberBinding='{Binding Size}'>
                                             <GridViewColumn.HeaderContainerStyle>
-                                                <Style TargetType='GridViewColumnHeader'>
+                                                <Style TargetType='GridViewColumnHeader' BasedOn='{StaticResource {x:Type GridViewColumnHeader}}'>
                                                     <Setter Property='Tag' Value='Size'/>
                                                 </Style>
                                             </GridViewColumn.HeaderContainerStyle>
