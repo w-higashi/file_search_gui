@@ -177,7 +177,6 @@ public class FileSearchApp : Application
     private Button searchButton;
     private Button clearButton;                // 検索ボックスの × クリアボタン
     private ListView resultList;
-    private TextBlock resultEmptyMessage;       // 0件時・未検索時のメッセージ
     private Button openButton;
     private Button addButton;                  // depositScript 未設定時は Collapsed
     private ListBox fileHistoryList;
@@ -295,7 +294,6 @@ public class FileSearchApp : Application
         searchButton      = (Button)window.FindName("SearchButton");
         clearButton       = (Button)window.FindName("ClearButton");
         resultList        = (ListView)window.FindName("ResultList");
-        resultEmptyMessage = (TextBlock)window.FindName("ResultEmptyMessage");
         openButton        = (Button)window.FindName("OpenButton");
         addButton         = (Button)window.FindName("AddButton");
         fileHistoryList   = (ListBox)window.FindName("FileHistoryList");
@@ -337,10 +335,6 @@ public class FileSearchApp : Application
         // ボタン初期状態（選択なし → 無効）
         openButton.IsEnabled = false;
         addButton.IsEnabled = false;
-
-        // 初期メッセージ
-        resultEmptyMessage.Text = "宛名番号を入力して検索してください";
-        resultEmptyMessage.Visibility = Visibility.Visible;
     }
 
     // ==============================================================
@@ -378,9 +372,8 @@ public class FileSearchApp : Application
             searchBox.Text = "";
             currentResults.Clear();
             resultList.ItemsSource = null;
-            resultEmptyMessage.Text = "宛名番号を入力して検索してください";
-            resultEmptyMessage.Visibility = Visibility.Visible;
             statusLeft.Text = "";
+            statusLeft.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#666666"));
             openButton.IsEnabled = false;
             addButton.IsEnabled = false;
             searchBox.Focus();
@@ -808,14 +801,13 @@ public class FileSearchApp : Application
         int count = currentResults.Count;
         if (count == 0)
         {
-            resultEmptyMessage.Text = "該当するファイルが見つかりませんでした";
-            resultEmptyMessage.Visibility = Visibility.Visible;
             statusLeft.Text = "該当するファイルが見つかりませんでした";
+            statusLeft.Foreground = new SolidColorBrush(Colors.Red);
         }
         else
         {
-            resultEmptyMessage.Visibility = Visibility.Collapsed;
             statusLeft.Text = "\u2713 " + count + " 件のファイルが見つかりました";
+            statusLeft.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#666666"));
         }
 
         openButton.IsEnabled = false;
@@ -1645,12 +1637,6 @@ public class FileSearchApp : Application
                         </Border>
 
                         <Grid>
-                            <TextBlock x:Name='ResultEmptyMessage'
-                                       Text='宛名番号を入力して検索してください'
-                                       FontSize='12' Foreground='#999999'
-                                       HorizontalAlignment='Center' VerticalAlignment='Center'
-                                       Margin='0,40,0,0'/>
-
                             <ListView x:Name='ResultList' BorderThickness='0'
                                       Background='White' FontSize='12'
                                       SelectionMode='Extended'
