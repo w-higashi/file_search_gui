@@ -6,11 +6,14 @@
 // build.bat を実行して file_search.exe を生成し、ダブルクリックで起動する。
 // 宛名番号を入力して、設定で指定したフォルダ配下から .xlsm ファイルを検索する。
 // 検索結果から「ファイルを開く」または「差押リストに追加」を選択できる。
+// ★お気に入りフォルダ検索モードでは、ユーザー設定のフォルダを対象に
+// 全件表示やファイル名検索が可能。
 // 「差押リストに追加」を選ぶと、deposit_seizure_list.exe を呼び出して
 // そのファイルを処理対象として渡す。
 //
 // 【ビルド方法】
 // build.bat を実行（.NET Framework 4.0 の csc.exe を使用）
+// ※ お気に入りフォルダの参照ダイアログに System.Windows.Forms.dll が必要
 //
 // 【必要ファイル（同じフォルダに配置）】
 // ＜必須＞
@@ -212,6 +215,13 @@ public class FileSearchApp : Application
     private TextBlock statusLeft;              // フッター左（件数表示）
     private TextBlock statusRight;             // フッター右（検索フォルダ表示）
 
+    // --- お気に入りフォルダUI要素 ---
+    private Button starButton;                           // ★お気に入りフォルダ検索トグル
+    private Grid favOverlay;                             // お気に入り設定オーバーレイ
+    private StackPanel favSlotPanel;                     // フォルダスロット一覧
+    private TextBox favPathInput;                        // フォルダパス入力欄
+    private TextBlock favSectionBadge;                   // セクションヘッダーの★バッジ
+
     // --- 状態 ---
     private List<string> searchHistory = new List<string>();
     private List<FileHistoryEntry> fileHistory = new List<FileHistoryEntry>();
@@ -225,6 +235,13 @@ public class FileSearchApp : Application
     private Border searchOverlay;                        // 検索中のローディングオーバーレイ
     private RotateTransform spinnerRotation;              // スピナーの回転トランスフォーム
 
+    // --- お気に入りフォルダ検索 ---
+    private bool isFavoriteMode = false;                  // お気に入りフォルダ検索モードか
+    private List<string> favoriteFolders = new List<string>();
+    private const int FAVORITE_FOLDERS_MAX = 5;           // お気に入りフォルダの上限
+    private bool pendingFavoriteRefresh = false;          // キャンセル後の全件再走査を保留中か
+    private string[] favFoldersSnapshot;                  // オーバーレイ表示時のスナップショット（変更検知用）
+
     // --- キャッシュ済みブラシ（MakeIcon・UpdateFileHistoryUI 用） ---
     private static readonly SolidColorBrush BrushIconGray    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#555555"));
     private static readonly SolidColorBrush BrushIconGreen   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#107C41"));
@@ -234,6 +251,11 @@ public class FileSearchApp : Application
     private static readonly SolidColorBrush BrushTabInactive = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#777777"));
     private static readonly SolidColorBrush BrushFooter      = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#666666"));
     private static readonly SolidColorBrush BrushError       = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#D32F2F"));
+    private static readonly SolidColorBrush BrushStarOn      = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E8F0FE"));
+    private static readonly SolidColorBrush BrushBorderLight = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#D0D0D0"));
+    private static readonly SolidColorBrush BrushBorderNormal = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E0E0E0"));
+    private static readonly SolidColorBrush BrushSlotEmpty   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FAFAFA"));
+    private static readonly SolidColorBrush BrushDeleteHover = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDE8E8"));
 
     // --- ソート列名のマッピング（UpdateSortIndicators 用） ---
     private static readonly Dictionary<string, string> SortColumnNames = new Dictionary<string, string>
@@ -260,6 +282,11 @@ public class FileSearchApp : Application
         BrushTabInactive.Freeze();
         BrushFooter.Freeze();
         BrushError.Freeze();
+        BrushStarOn.Freeze();
+        BrushBorderLight.Freeze();
+        BrushBorderNormal.Freeze();
+        BrushSlotEmpty.Freeze();
+        BrushDeleteHover.Freeze();
 
         var app = new FileSearchApp();
         app.Run();
@@ -339,6 +366,13 @@ public class FileSearchApp : Application
         var spinnerPath = (FrameworkElement)window.FindName("SpinnerPath");
         if (spinnerPath != null)
             spinnerRotation = spinnerPath.RenderTransform as RotateTransform;
+
+        // お気に入りフォルダ関連
+        starButton       = (Button)window.FindName("StarButton");
+        favOverlay        = (Grid)window.FindName("FavOverlay");
+        favSlotPanel      = (StackPanel)window.FindName("FavSlotPanel");
+        favPathInput      = (TextBox)window.FindName("FavPathInput");
+        favSectionBadge   = (TextBlock)window.FindName("FavSectionBadge");
     }
 
     // ==============================================================
@@ -370,6 +404,9 @@ public class FileSearchApp : Application
         // ボタン初期状態（選択なし → 無効）
         openButton.IsEnabled = false;
         addButton.IsEnabled = false;
+
+        // お気に入りフォルダスロットの初期描画
+        UpdateFavoriteUI();
     }
 
     // ==============================================================
@@ -407,16 +444,71 @@ public class FileSearchApp : Application
             if (searchWorker.IsBusy)
                 searchWorker.CancelAsync();
             searchBox.Text = "";
-            currentResults.Clear();
-            resultList.ItemsSource = null;
             searchOverlay.BeginAnimation(UIElement.OpacityProperty, null);
             searchOverlay.Visibility = Visibility.Collapsed;
-            statusLeft.Text = "";
             statusLeft.Foreground = BrushFooter;
             searchButton.IsEnabled = true;
             openButton.IsEnabled = false;
             addButton.IsEnabled = false;
+
+            if (isFavoriteMode)
+            {
+                // お気に入りモード中は全件再走査
+                // 検索中だった場合は Completed で再走査する
+                if (searchWorker.IsBusy)
+                    pendingFavoriteRefresh = true;
+                else
+                    ExecuteSearch("");
+            }
+            else
+            {
+                currentResults.Clear();
+                resultList.ItemsSource = null;
+                statusLeft.Text = "";
+            }
+
             searchBox.Focus();
+        };
+
+        // --- ★お気に入りフォルダボタン ---
+        starButton.Click += delegate { ToggleFavoriteMode(); };
+        starButton.MouseRightButtonUp += delegate(object s, MouseButtonEventArgs e)
+        {
+            ShowFavoriteOverlay();
+            e.Handled = true;
+        };
+
+        // --- お気に入り設定オーバーレイ ---
+        var favCloseButton = (Button)window.FindName("FavCloseButton");
+        var favBrowseButton = (Button)window.FindName("FavBrowseButton");
+        var favAddButton = (Button)window.FindName("FavAddButton");
+
+        favCloseButton.Click += delegate { CloseFavoriteOverlay(); };
+        favBrowseButton.Click += delegate
+        {
+            // FolderBrowserDialog でフォルダを選択しパス入力欄に反映
+            var dlg = new System.Windows.Forms.FolderBrowserDialog();
+            dlg.Description = "お気に入りに追加するフォルダを選択してください";
+            if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+                favPathInput.Text = dlg.SelectedPath;
+        };
+        favAddButton.Click += delegate { AddFavoriteFolder(); };
+        favPathInput.KeyDown += delegate(object s, KeyEventArgs e)
+        {
+            if (e.Key == Key.Return) { AddFavoriteFolder(); e.Handled = true; }
+        };
+
+        // オーバーレイの暗転背景クリックで閉じる（カード内クリックは無視）
+        var favCard = (Border)window.FindName("FavCard");
+        favOverlay.MouseDown += delegate(object s, MouseButtonEventArgs e)
+        {
+            var hit = e.OriginalSource as DependencyObject;
+            while (hit != null)
+            {
+                if (hit == favCard) return;  // カード内のクリックは無視
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+            CloseFavoriteOverlay();
         };
 
         // --- サイドパネルのタブ切替 ---
@@ -501,13 +593,18 @@ public class FileSearchApp : Application
         window.InputBindings.Add(new KeyBinding(
             new RelayCommand(p => {
                 var query = searchBox.Text;
-                if (!string.IsNullOrWhiteSpace(query)) ExecuteSearch(query);
+                if (!string.IsNullOrWhiteSpace(query) || isFavoriteMode)
+                    ExecuteSearch(query ?? "");
             }),
             new KeyGesture(Key.F5)));
 
         window.InputBindings.Add(new KeyBinding(
             new RelayCommand(p => DeleteSelectedHistory()),
             new KeyGesture(Key.Delete)));
+
+        window.InputBindings.Add(new KeyBinding(
+            new RelayCommand(p => { if (favOverlay.Visibility == Visibility.Visible) CloseFavoriteOverlay(); }),
+            new KeyGesture(Key.Escape)));
 
         // --- 空白領域クリックで選択・フォーカスを解除 ---
         window.MouseDown += delegate(object s, MouseButtonEventArgs e)
@@ -822,16 +919,20 @@ public class FileSearchApp : Application
     private void ExecuteSearch(string query)
     {
         query = (query ?? "").Trim();
-        if (string.IsNullOrEmpty(query)) return;
+        // 通常モードでは空文字列は無視、お気に入りモードでは空文字列で全件表示
+        if (string.IsNullOrEmpty(query) && !isFavoriteMode) return;
         if (searchWorker.IsBusy) return;
 
-        // --- 検索履歴に追加（重複除去→先頭挿入→上限超過分を削除） ---
-        searchHistory.Remove(query);
-        searchHistory.Insert(0, query);
-        if (searchHistory.Count > config.SearchHistoryMax)
-            searchHistory.RemoveAt(config.SearchHistoryMax);
-        SaveHistory();
-        UpdateSearchHistoryUI();
+        // --- 検索履歴に追加（空文字列は履歴に追加しない） ---
+        if (!string.IsNullOrEmpty(query))
+        {
+            searchHistory.Remove(query);
+            searchHistory.Insert(0, query);
+            if (searchHistory.Count > config.SearchHistoryMax)
+                searchHistory.RemoveAt(config.SearchHistoryMax);
+            SaveHistory();
+            UpdateSearchHistoryUI();
+        }
 
         // --- UI準備（検索中の操作を制限） ---
         statusLeft.Text = "検索中...";
@@ -849,18 +950,23 @@ public class FileSearchApp : Application
             ForceRender();
         }
 
-        // --- 非同期検索開始 ---
-        searchWorker.RunWorkerAsync(query);
+        // --- 非同期検索開始（検索対象フォルダはモードに応じて切替） ---
+        var searchFolders = isFavoriteMode
+            ? favoriteFolders.ToArray()
+            : config.SearchFolders;
+        searchWorker.RunWorkerAsync(new object[] { query, searchFolders });
     }
 
     // ワーカースレッド: ファイル検索 + ソート（UI スレッドをブロックしない）
     private void SearchWorker_DoWork(object sender, DoWorkEventArgs e)
     {
-        var query = (string)e.Argument;
+        var args = (object[])e.Argument;
+        var query = (string)args[0];
+        var folders = (string[])args[1];
         var results = new List<SearchResultItem>();
 
         // EnumerateFiles で遅延列挙（GetFiles と異なり全件取得を待たず順次処理可能）
-        foreach (var folder in config.SearchFolders)
+        foreach (var folder in folders)
         {
             if (searchWorker.CancellationPending) { e.Cancel = true; return; }
 
@@ -872,8 +978,10 @@ public class FileSearchApp : Application
                     if (searchWorker.CancellationPending) { e.Cancel = true; return; }
 
                     // BaseName（拡張子なし）に入力文字列を含むか（部分一致・大文字小文字無視）
+                    // 空文字列の場合は全件表示（お気に入りモード）
                     var baseName = System.IO.Path.GetFileNameWithoutExtension(file.Name);
-                    if (baseName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
+                    if (!string.IsNullOrEmpty(query)
+                        && baseName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
                         continue;
 
                     var relPath = GetRelativePath(file.FullName);
@@ -909,7 +1017,16 @@ public class FileSearchApp : Application
         fadeOut.Completed += delegate { searchOverlay.Visibility = Visibility.Collapsed; };
         searchOverlay.BeginAnimation(UIElement.OpacityProperty, fadeOut);
 
-        if (e.Cancelled) return;
+        if (e.Cancelled)
+        {
+            // キャンセル後にお気に入りモードの全件再走査が保留中なら実行
+            if (pendingFavoriteRefresh && isFavoriteMode)
+            {
+                pendingFavoriteRefresh = false;
+                ExecuteSearch("");
+            }
+            return;
+        }
 
         if (e.Error != null)
         {
@@ -1294,7 +1411,16 @@ public class FileSearchApp : Application
                 sb.Append("\"openedAt\": \"" + fileHistory[i].OpenedAt.ToString("o") + "\" }");
             }
             sb.AppendLine();
-            sb.AppendLine("  ]");
+            sb.AppendLine("  ],");
+
+            // favoriteFolders
+            sb.Append("  \"favoriteFolders\": [");
+            for (int i = 0; i < favoriteFolders.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append("\"" + EscapeJson(favoriteFolders[i]) + "\"");
+            }
+            sb.AppendLine("]");
 
             sb.AppendLine("}");
 
@@ -1373,11 +1499,12 @@ public class FileSearchApp : Application
     // LGWAN 環境では NuGet パッケージが使えないため手動パース
     // ==============================================================
 
-    // 履歴JSONを解析して searchHistory / fileHistory に格納
+    // 履歴JSONを解析して searchHistory / fileHistory / favoriteFolders に格納
     private void ParseHistoryJson(string json)
     {
         searchHistory.Clear();
         fileHistory.Clear();
+        favoriteFolders.Clear();
 
         // --- searchHistory の解析 ---
         var shStart = json.IndexOf("\"searchHistory\"");
@@ -1440,6 +1567,25 @@ public class FileSearchApp : Application
                 }
             }
         }
+
+        // --- favoriteFolders の解析 ---
+        var ffStart = json.IndexOf("\"favoriteFolders\"");
+        if (ffStart >= 0)
+        {
+            var arrStart = json.IndexOf('[', ffStart);
+            var arrEnd = json.IndexOf(']', arrStart);
+            if (arrStart >= 0 && arrEnd >= 0)
+            {
+                var arrContent = json.Substring(arrStart + 1, arrEnd - arrStart - 1);
+                foreach (var part in SplitJsonStrings(arrContent))
+                {
+                    var val = part.Trim().Replace("\\\\", "\\");
+                    if (!string.IsNullOrWhiteSpace(val) && Directory.Exists(val)
+                        && favoriteFolders.Count < FAVORITE_FOLDERS_MAX)
+                        favoriteFolders.Add(val);
+                }
+            }
+        }
     }
 
     // JSON 文字列配列の中身を分割して返す
@@ -1493,13 +1639,314 @@ public class FileSearchApp : Application
     }
 
     // ==============================================================
+    // お気に入りフォルダ検索
+    // ==============================================================
+
+    // ★ボタン左クリック: 初回はオーバーレイ表示、2回目以降はモード切替
+    private void ToggleFavoriteMode()
+    {
+        if (!isFavoriteMode && favoriteFolders.Count == 0)
+        {
+            // フォルダ未登録ならオーバーレイを表示して設定を促す
+            ShowFavoriteOverlay();
+            return;
+        }
+
+        isFavoriteMode = !isFavoriteMode;
+        ApplyFavoriteModeUI();
+
+        if (isFavoriteMode)
+        {
+            // ON: テキストクリア → 全件走査開始
+            searchBox.Text = "";
+            ExecuteSearch("");
+        }
+        else
+        {
+            // OFF: テキストクリア → 結果テーブルクリア
+            if (searchWorker.IsBusy) searchWorker.CancelAsync();
+            searchBox.Text = "";
+            currentResults.Clear();
+            resultList.ItemsSource = null;
+            searchOverlay.BeginAnimation(UIElement.OpacityProperty, null);
+            searchOverlay.Visibility = Visibility.Collapsed;
+            statusLeft.Text = "";
+            statusLeft.Foreground = BrushFooter;
+            searchButton.IsEnabled = true;
+            openButton.IsEnabled = false;
+            addButton.IsEnabled = false;
+        }
+
+        searchBox.Focus();
+    }
+
+    // ★ボタンとセクションヘッダー・フッターの表示を更新
+    private void ApplyFavoriteModeUI()
+    {
+        // ★ボタンの見た目
+        var starBd = FindVisualChild<Border>(starButton);
+        if (starBd != null)
+        {
+            starBd.Background = isFavoriteMode ? BrushStarOn : Brushes.White;
+            starBd.BorderBrush = isFavoriteMode ? BrushAccent : BrushBorderLight;
+        }
+        var starText = FindVisualChild<TextBlock>(starButton);
+        if (starText != null)
+            starText.Foreground = isFavoriteMode ? BrushAccent : BrushSecondary;
+
+        // セクションヘッダーの★バッジ
+        favSectionBadge.Visibility = isFavoriteMode ? Visibility.Visible : Visibility.Collapsed;
+
+        // フッター右
+        UpdateFavoriteFooter();
+    }
+
+    // フッター右の表示をモードに応じて更新
+    private void UpdateFavoriteFooter()
+    {
+        if (isFavoriteMode)
+        {
+            statusRight.Text = "★ お気に入りフォルダ（" + favoriteFolders.Count + " 個）";
+            statusRight.Foreground = BrushAccent;
+            statusRight.ToolTip = string.Join("\n", favoriteFolders);
+        }
+        else
+        {
+            statusRight.Foreground = BrushFooter;
+            if (config.SearchFolders.Length == 1)
+            {
+                statusRight.Text = config.SearchFolders[0];
+                statusRight.ToolTip = config.SearchFolders[0];
+            }
+            else
+            {
+                statusRight.Text = config.SearchFolders.Length + " 個のフォルダを検索中";
+                statusRight.ToolTip = string.Join("\n", config.SearchFolders);
+            }
+        }
+    }
+
+    // お気に入り設定オーバーレイを表示（フェードイン）
+    private void ShowFavoriteOverlay()
+    {
+        favFoldersSnapshot = favoriteFolders.ToArray();
+        UpdateFavoriteUI();
+        favPathInput.Text = "";
+        favOverlay.BeginAnimation(UIElement.OpacityProperty, null);
+        favOverlay.Opacity = 0;
+        favOverlay.Visibility = Visibility.Visible;
+        var anim = new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(150)));
+        favOverlay.BeginAnimation(UIElement.OpacityProperty, anim);
+        favPathInput.Focus();
+    }
+
+    // お気に入り設定オーバーレイを閉じる（フェードアウト）
+    private void CloseFavoriteOverlay()
+    {
+        var anim = new DoubleAnimation(1, 0, new Duration(TimeSpan.FromMilliseconds(150)));
+        anim.Completed += delegate
+        {
+            favOverlay.Visibility = Visibility.Collapsed;
+            favOverlay.BeginAnimation(UIElement.OpacityProperty, null);
+            favOverlay.Opacity = 1;
+
+            if (favoriteFolders.Count > 0)
+            {
+                if (!isFavoriteMode)
+                {
+                    // 初回設定完了: モードON → 全件走査
+                    isFavoriteMode = true;
+                    ApplyFavoriteModeUI();
+                    searchBox.Text = "";
+                    ExecuteSearch("");
+                }
+                else
+                {
+                    // 既にON中の編集: フォルダ構成が変わった場合のみ再走査
+                    bool changed = !favoriteFolders.SequenceEqual(favFoldersSnapshot ?? new string[0]);
+                    if (changed)
+                    {
+                        UpdateFavoriteFooter();
+                        ExecuteSearch(searchBox.Text);
+                    }
+                }
+            }
+            searchBox.Focus();
+        };
+        favOverlay.BeginAnimation(UIElement.OpacityProperty, anim);
+    }
+
+    // お気に入りフォルダを追加（パス入力欄から）
+    private void AddFavoriteFolder()
+    {
+        var path = (favPathInput.Text ?? "").Trim();
+        if (string.IsNullOrEmpty(path)) return;
+
+        if (!Directory.Exists(path))
+        {
+            MessageBox.Show("フォルダが見つかりません:\n" + path,
+                "エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // 重複チェック
+        if (favoriteFolders.Any(f => string.Equals(f, path, StringComparison.OrdinalIgnoreCase)))
+        {
+            MessageBox.Show("このフォルダは既に登録されています。",
+                "確認", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (favoriteFolders.Count >= FAVORITE_FOLDERS_MAX)
+        {
+            MessageBox.Show("お気に入りフォルダは最大 " + FAVORITE_FOLDERS_MAX + " 個までです。",
+                "確認", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        favoriteFolders.Add(path);
+        SaveHistory();
+        UpdateFavoriteUI();
+        favPathInput.Text = "";
+        favPathInput.Focus();
+    }
+
+    // お気に入りフォルダを削除（インデックス指定）
+    private void RemoveFavoriteFolder(int index)
+    {
+        if (index < 0 || index >= favoriteFolders.Count) return;
+        favoriteFolders.RemoveAt(index);
+        SaveHistory();
+        UpdateFavoriteUI();
+
+        // 全削除された場合はモードOFF
+        if (favoriteFolders.Count == 0 && isFavoriteMode)
+        {
+            isFavoriteMode = false;
+            ApplyFavoriteModeUI();
+            currentResults.Clear();
+            resultList.ItemsSource = null;
+            statusLeft.Text = "";
+            statusLeft.Foreground = BrushFooter;
+            openButton.IsEnabled = false;
+            addButton.IsEnabled = false;
+        }
+    }
+
+    // お気に入りフォルダスロットの表示を更新
+    private void UpdateFavoriteUI()
+    {
+        favSlotPanel.Children.Clear();
+
+        // 登録済みスロット
+        for (int i = 0; i < favoriteFolders.Count; i++)
+        {
+            var idx = i;  // クロージャ用
+            var border = new Border
+            {
+                BorderBrush = BrushBorderNormal,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 7, 8, 7),
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+
+            // フォルダアイコン（Canvas+Path、MakeIcon と同一方式）
+            var icon = MakeIcon(IconKind.Folder);
+            Grid.SetColumn((UIElement)icon, 0);
+            grid.Children.Add((UIElement)icon);
+
+            // パステキスト
+            var pathText = new TextBlock
+            {
+                Text = favoriteFolders[i],
+                FontSize = 11, FontFamily = new FontFamily("Consolas"),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(4, 0, 4, 0),
+                ToolTip = favoriteFolders[i]
+            };
+            Grid.SetColumn(pathText, 1);
+            grid.Children.Add(pathText);
+
+            // 削除ボタン（ControlTemplate でデフォルトテーマを除去、ホバー時に赤）
+            var delBtn = new Button { Cursor = Cursors.Hand, Focusable = false };
+            var delTemplate = new ControlTemplate(typeof(Button));
+            var delBorder = new FrameworkElementFactory(typeof(Border));
+            delBorder.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+            delBorder.SetValue(Border.WidthProperty, 20.0);
+            delBorder.SetValue(Border.HeightProperty, 20.0);
+            delBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(3));
+            delBorder.Name = "delBg";
+            var delText = new FrameworkElementFactory(typeof(TextBlock));
+            delText.SetValue(TextBlock.TextProperty, "✕");
+            delText.SetValue(TextBlock.FontSizeProperty, 10.0);
+            delText.SetValue(TextBlock.ForegroundProperty, BrushSecondary);
+            delText.SetValue(TextBlock.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            delText.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center);
+            delText.Name = "delTxt";
+            delBorder.AppendChild(delText);
+            delTemplate.VisualTree = delBorder;
+            var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, BrushDeleteHover, "delBg"));
+            hoverTrigger.Setters.Add(new Setter(TextBlock.ForegroundProperty, BrushError, "delTxt"));
+            delTemplate.Triggers.Add(hoverTrigger);
+            delBtn.Template = delTemplate;
+            delBtn.Click += delegate { RemoveFavoriteFolder(idx); };
+            Grid.SetColumn(delBtn, 2);
+            grid.Children.Add(delBtn);
+
+            border.Child = grid;
+            favSlotPanel.Children.Add(border);
+        }
+
+        // 空スロット
+        for (int i = favoriteFolders.Count; i < FAVORITE_FOLDERS_MAX; i++)
+        {
+            var border = new Border
+            {
+                BorderBrush = BrushBorderLight,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 7, 8, 7),
+                Margin = new Thickness(0, 0, 0, 6),
+                Background = BrushSlotEmpty
+            };
+
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            sp.Children.Add(new TextBlock
+            {
+                Text = (i + 1).ToString(),
+                FontSize = 11, Foreground = BrushSecondary,
+                Width = 16, VerticalAlignment = VerticalAlignment.Center
+            });
+            sp.Children.Add(new TextBlock
+            {
+                Text = "未登録",
+                FontSize = 11, Foreground = BrushSecondary,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            border.Child = sp;
+            favSlotPanel.Children.Add(border);
+        }
+    }
+
+    // ==============================================================
     // ヘルパー
     // ==============================================================
 
-    // ファイルのフルパスから、該当する searchFolder を基準にした相対パスを返す
+    // ファイルのフルパスから、該当する検索フォルダを基準にした相対パスを返す
     private string GetRelativePath(string fullPath)
     {
-        foreach (var folder in config.SearchFolders)
+        // searchFolder とお気に入りフォルダの両方を対象に検索
+        var allFolders = config.SearchFolders.Concat(favoriteFolders);
+        foreach (var folder in allFolders)
         {
             var normalized = folder.TrimEnd('\\');
             if (fullPath.StartsWith(normalized + "\\", StringComparison.OrdinalIgnoreCase))
@@ -1675,6 +2122,7 @@ public class FileSearchApp : Application
 
     </Window.Resources>
 
+    <Grid>
     <DockPanel>
         <!-- ============ ヘッダー ============ -->
         <Border DockPanel.Dock='Top' Background='#005FB8' Padding='18,10'>
@@ -1707,6 +2155,8 @@ public class FileSearchApp : Application
                 <Grid DockPanel.Dock='Top' Margin='0,0,0,12'>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width='*'/>
+                        <ColumnDefinition Width='8'/>
+                        <ColumnDefinition Width='Auto'/>
                         <ColumnDefinition Width='8'/>
                         <ColumnDefinition Width='Auto'/>
                     </Grid.ColumnDefinitions>
@@ -1773,6 +2223,29 @@ public class FileSearchApp : Application
                             <TextBlock Text='検索' VerticalAlignment='Center'/>
                         </StackPanel>
                     </Button>
+
+                    <!-- ★お気に入りフォルダ検索ボタン -->
+                    <Button x:Name='StarButton' Grid.Column='4'
+                            Cursor='Hand' ToolTip='お気に入りフォルダ検索'>
+                        <Button.Template>
+                            <ControlTemplate TargetType='Button'>
+                                <Border x:Name='starBd' Background='White'
+                                        BorderBrush='#D0D0D0' BorderThickness='1'
+                                        CornerRadius='4' Width='32' Height='32'>
+                                    <TextBlock Text='★' FontSize='15'
+                                               Foreground='#999'
+                                               HorizontalAlignment='Center'
+                                               VerticalAlignment='Center'
+                                               Margin='0,-1,0,0'/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property='IsMouseOver' Value='True'>
+                                        <Setter TargetName='starBd' Property='Background' Value='#F0F4F8'/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
                 </Grid>
 
                 <!-- アクションボタン -->
@@ -1800,8 +2273,14 @@ public class FileSearchApp : Application
                         <Border DockPanel.Dock='Top' Padding='14,8'
                                 Background='#FAFAFA'
                                 BorderBrush='#E0E0E0' BorderThickness='0,0,0,1'>
-                            <TextBlock Text='&#x2261; 検索結果'
-                                       FontSize='13' Foreground='#005FB8' FontWeight='Medium'/>
+                            <DockPanel>
+                                <TextBlock Text='&#x2261; 検索結果'
+                                           FontSize='13' Foreground='#005FB8' FontWeight='Medium'/>
+                                <TextBlock x:Name='FavSectionBadge' Text='★ お気に入りフォルダ'
+                                           FontSize='11' Foreground='#005FB8'
+                                           VerticalAlignment='Center' Margin='6,0,0,0'
+                                           Visibility='Collapsed'/>
+                            </DockPanel>
                         </Border>
 
                         <Grid>
@@ -1932,6 +2411,92 @@ public class FileSearchApp : Application
             </Border>
         </Grid>
     </DockPanel>
+
+    <!-- ============ お気に入りフォルダ設定オーバーレイ ============ -->
+    <Grid x:Name='FavOverlay' Visibility='Collapsed'>
+        <Border Background='#80000000'/>
+        <Border x:Name='FavCard' Background='White' CornerRadius='8'
+                Padding='20,20,24,20'
+                HorizontalAlignment='Center' VerticalAlignment='Center'
+                Width='440'>
+            <StackPanel>
+                <DockPanel Margin='0,0,0,4'>
+                    <Button x:Name='FavCloseButton' DockPanel.Dock='Right'
+                            Cursor='Hand' Focusable='False'
+                            VerticalAlignment='Top' Margin='0,-4,-4,0'>
+                        <Button.Template>
+                            <ControlTemplate TargetType='Button'>
+                                <Border x:Name='cbg' Width='24' Height='24'
+                                        CornerRadius='4' Background='Transparent'>
+                                    <TextBlock Text='✕' FontSize='13'
+                                               Foreground='#999'
+                                               HorizontalAlignment='Center'
+                                               VerticalAlignment='Center'/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property='IsMouseOver' Value='True'>
+                                        <Setter TargetName='cbg' Property='Background' Value='#F0F0F0'/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <TextBlock Text='お気に入りフォルダの設定'
+                               FontSize='15' FontWeight='Medium'/>
+                </DockPanel>
+                <TextBlock Text='最大 5 フォルダまで登録できます。サブフォルダも再帰的に検索します。'
+                           FontSize='11' Foreground='#999' Margin='0,0,0,16'/>
+                <StackPanel x:Name='FavSlotPanel'/>
+                <Border BorderBrush='#E0E0E0' BorderThickness='0,1,0,0'
+                        Padding='0,12,0,0' Margin='0,6,0,0'>
+                    <StackPanel>
+                        <TextBlock Text='フォルダを追加' FontSize='11'
+                                   Foreground='#999' Margin='0,0,0,6'/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width='*'/>
+                                <ColumnDefinition Width='6'/>
+                                <ColumnDefinition Width='Auto'/>
+                                <ColumnDefinition Width='6'/>
+                                <ColumnDefinition Width='Auto'/>
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column='0' Background='White'
+                                    BorderBrush='#D0D0D0' BorderThickness='1'
+                                    CornerRadius='4'>
+                                <TextBox x:Name='FavPathInput' FontSize='11'
+                                         FontFamily='Consolas'
+                                         Padding='8,6' BorderThickness='0'
+                                         Background='Transparent'
+                                         VerticalContentAlignment='Center'/>
+                            </Border>
+                            <Button x:Name='FavBrowseButton' Grid.Column='2'
+                                    Style='{StaticResource GB}'
+                                    Padding='8,6' FontSize='11'>
+                                <StackPanel Orientation='Horizontal'>
+                                    <Canvas Width='14' Height='14' Margin='0,0,4,0'>
+                                        <Path Data='M1,4 L1,12 L13,12 L13,6 L6.5,6 L5,4 Z'
+                                              Stroke='#555' StrokeThickness='1' Fill='#E8EEF4'/>
+                                    </Canvas>
+                                    <TextBlock Text='参照' VerticalAlignment='Center'/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name='FavAddButton' Grid.Column='4'
+                                    Style='{StaticResource AB}'
+                                    Padding='8,6' FontSize='11'>
+                                <StackPanel Orientation='Horizontal'>
+                                    <TextBlock Text='＋' FontWeight='Bold'
+                                               Margin='0,0,3,0'/>
+                                    <TextBlock Text='追加'/>
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    </Grid>
 </Window>";
 
         using (var reader = XmlReader.Create(new StringReader(xaml)))
