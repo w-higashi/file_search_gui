@@ -21,6 +21,8 @@
 // - file_search_config.json （設定ファイル）
 // - file_search.ico （アプリケーションアイコン）
 // - build.bat （ビルドスクリプト）
+// ＜任意＞
+// - update_notice.json （アップデート告知。配置時のみ初回起動時に表示）
 // ==============================================================================
 
 using System;
@@ -189,6 +191,27 @@ public class FileHistoryEntry
     public DateTime OpenedAt { get; set; }     // ユーザーがファイルを開いた日時
 }
 
+// アップデート告知（update_notice.json のデシリアライズ用）
+public class UpdateNotice
+{
+    public string Version { get; set; }
+    public List<NoticeFeature> Features { get; set; }
+    public UpdateNotice() { Features = new List<NoticeFeature>(); }
+}
+public class NoticeFeature
+{
+    public string Title { get; set; }
+    public string Description { get; set; }
+    public List<NoticeSection> Sections { get; set; }
+    public NoticeFeature() { Sections = new List<NoticeSection>(); }
+}
+public class NoticeSection
+{
+    public string Heading { get; set; }
+    public List<string> Items { get; set; }
+    public NoticeSection() { Items = new List<string>(); }
+}
+
 // ==============================================================
 // メインアプリケーション
 // ==============================================================
@@ -242,6 +265,12 @@ public class FileSearchApp : Application
     private bool pendingFavoriteRefresh = false;          // キャンセル後の全件再走査を保留中か
     private string[] favFoldersSnapshot;                  // オーバーレイ表示時のスナップショット（変更検知用）
 
+    // --- アップデート告知 ---
+    private string lastSeenVersion = "";                  // ユーザーが最後に確認した告知バージョン
+    private string pendingNoticeVersion = "";             // 表示中の告知のバージョン
+    private Grid noticeOverlay;                           // アップデート告知オーバーレイ
+    private StackPanel noticeContent;                     // 告知内容の動的描画エリア
+
     // --- キャッシュ済みブラシ（MakeIcon・UpdateFileHistoryUI 用） ---
     private static readonly SolidColorBrush BrushIconGray    = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#555555"));
     private static readonly SolidColorBrush BrushIconGreen   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#107C41"));
@@ -255,7 +284,7 @@ public class FileSearchApp : Application
     private static readonly SolidColorBrush BrushBorderLight = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#D0D0D0"));
     private static readonly SolidColorBrush BrushBorderNormal = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E0E0E0"));
     private static readonly SolidColorBrush BrushSlotEmpty   = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FAFAFA"));
-    private static readonly SolidColorBrush BrushDeleteHover = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDE8E8"));
+    private static readonly SolidColorBrush BrushHoverBg     = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F0F0F0"));
 
     // --- ソート列名のマッピング（UpdateSortIndicators 用） ---
     private static readonly Dictionary<string, string> SortColumnNames = new Dictionary<string, string>
@@ -286,7 +315,7 @@ public class FileSearchApp : Application
         BrushBorderLight.Freeze();
         BrushBorderNormal.Freeze();
         BrushSlotEmpty.Freeze();
-        BrushDeleteHover.Freeze();
+        BrushHoverBg.Freeze();
 
         var app = new FileSearchApp();
         app.Run();
@@ -333,8 +362,12 @@ public class FileSearchApp : Application
         SetupEvents();
         InitializeUI();
 
-        // 起動後に検索ボックスにフォーカス
-        window.ContentRendered += delegate { searchBox.Focus(); };
+        // 起動後に検索ボックスにフォーカス + アップデート告知チェック
+        window.ContentRendered += delegate
+        {
+            searchBox.Focus();
+            CheckUpdateNotice();
+        };
         window.Show();
     }
 
@@ -373,6 +406,10 @@ public class FileSearchApp : Application
         favSlotPanel      = (StackPanel)window.FindName("FavSlotPanel");
         favPathInput      = (TextBox)window.FindName("FavPathInput");
         favSectionBadge   = (TextBlock)window.FindName("FavSectionBadge");
+
+        // アップデート告知関連
+        noticeOverlay    = (Grid)window.FindName("NoticeOverlay");
+        noticeContent    = (StackPanel)window.FindName("NoticeContent");
     }
 
     // ==============================================================
@@ -510,6 +547,10 @@ public class FileSearchApp : Application
             }
             CloseFavoriteOverlay();
         };
+
+        // --- アップデート告知オーバーレイ ---
+        var noticeCloseButton = (Button)window.FindName("NoticeCloseButton");
+        noticeCloseButton.Click += delegate { CloseNoticeOverlay(); };
 
         // --- サイドパネルのタブ切替 ---
         tabHistory.MouseDown += delegate { SwitchTab("history"); };
@@ -1420,7 +1461,10 @@ public class FileSearchApp : Application
                 if (i > 0) sb.Append(", ");
                 sb.Append("\"" + EscapeJson(favoriteFolders[i]) + "\"");
             }
-            sb.AppendLine("]");
+            sb.AppendLine("],");
+
+            // lastSeenVersion
+            sb.AppendLine("  \"lastSeenVersion\": \"" + EscapeJson(lastSeenVersion) + "\"");
 
             sb.AppendLine("}");
 
@@ -1586,6 +1630,11 @@ public class FileSearchApp : Application
                 }
             }
         }
+
+        // --- lastSeenVersion の解析 ---
+        var lsvVal = ExtractJsonStringValue(json, "lastSeenVersion");
+        if (!string.IsNullOrEmpty(lsvVal))
+            lastSeenVersion = lsvVal;
     }
 
     // JSON 文字列配列の中身を分割して返す
@@ -1893,8 +1942,7 @@ public class FileSearchApp : Application
             delBorder.AppendChild(delText);
             delTemplate.VisualTree = delBorder;
             var hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, BrushDeleteHover, "delBg"));
-            hoverTrigger.Setters.Add(new Setter(TextBlock.ForegroundProperty, BrushError, "delTxt"));
+            hoverTrigger.Setters.Add(new Setter(Border.BackgroundProperty, BrushHoverBg, "delBg"));
             delTemplate.Triggers.Add(hoverTrigger);
             delBtn.Template = delTemplate;
             delBtn.Click += delegate { RemoveFavoriteFolder(idx); };
@@ -1935,6 +1983,238 @@ public class FileSearchApp : Application
             border.Child = sp;
             favSlotPanel.Children.Add(border);
         }
+    }
+
+    // ==============================================================
+    // アップデート告知
+    // ==============================================================
+
+    // 起動時にアップデート告知の表示要否をチェック
+    private void CheckUpdateNotice()
+    {
+        try
+        {
+            var noticePath = System.IO.Path.Combine(exeDir, "update_notice.json");
+            if (!File.Exists(noticePath)) return;
+
+            var notice = LoadUpdateNotice(noticePath);
+            if (notice == null || string.IsNullOrEmpty(notice.Version)) return;
+            if (notice.Version == lastSeenVersion) return;
+            if (notice.Features.Count == 0) return;
+
+            pendingNoticeVersion = notice.Version;
+            BuildNoticeUI(notice);
+            ShowNoticeOverlay();
+        }
+        catch { /* 告知読み込み失敗時は通知をスキップ */ }
+    }
+
+    // update_notice.json を手動パースして UpdateNotice を返す
+    private UpdateNotice LoadUpdateNotice(string path)
+    {
+        var json = File.ReadAllText(path, Encoding.UTF8);
+        var notice = new UpdateNotice();
+
+        // version
+        notice.Version = ExtractJsonStringValue(json, "version");
+
+        // features 配列の範囲を取得
+        var featuresStart = json.IndexOf("\"features\"");
+        if (featuresStart < 0) return notice;
+        var featArrStart = json.IndexOf('[', featuresStart);
+        var featArrEnd = FindMatchingBracket(json, featArrStart);
+        if (featArrStart < 0 || featArrEnd < 0) return notice;
+        var featArrContent = json.Substring(featArrStart + 1, featArrEnd - featArrStart - 1);
+
+        // 各 feature オブジェクトを解析
+        int pos = 0;
+        while (pos < featArrContent.Length)
+        {
+            var objStart = featArrContent.IndexOf('{', pos);
+            if (objStart < 0) break;
+            var objEnd = FindMatchingBrace(featArrContent, objStart);
+            if (objEnd < 0) break;
+            var objContent = featArrContent.Substring(objStart, objEnd - objStart + 1);
+
+            var feature = new NoticeFeature();
+            feature.Title = ExtractJsonStringValue(objContent, "title") ?? "";
+            feature.Description = ExtractJsonStringValue(objContent, "description") ?? "";
+
+            // sections 配列
+            var secStart = objContent.IndexOf("\"sections\"");
+            if (secStart >= 0)
+            {
+                var secArrStart = objContent.IndexOf('[', secStart);
+                var secArrEnd = FindMatchingBracket(objContent, secArrStart);
+                if (secArrStart >= 0 && secArrEnd >= 0)
+                {
+                    var secContent = objContent.Substring(secArrStart + 1, secArrEnd - secArrStart - 1);
+                    int sp = 0;
+                    while (sp < secContent.Length)
+                    {
+                        var sObjStart = secContent.IndexOf('{', sp);
+                        if (sObjStart < 0) break;
+                        var sObjEnd = secContent.IndexOf('}', sObjStart);
+                        if (sObjEnd < 0) break;
+                        var sObj = secContent.Substring(sObjStart + 1, sObjEnd - sObjStart - 1);
+
+                        var section = new NoticeSection();
+                        section.Heading = ExtractJsonStringValue(sObj, "heading") ?? "";
+
+                        // items 配列
+                        var itemsStart = sObj.IndexOf("\"items\"");
+                        if (itemsStart >= 0)
+                        {
+                            var iArrStart = sObj.IndexOf('[', itemsStart);
+                            var iArrEnd = sObj.IndexOf(']', iArrStart);
+                            if (iArrStart >= 0 && iArrEnd >= 0)
+                            {
+                                var iContent = sObj.Substring(iArrStart + 1, iArrEnd - iArrStart - 1);
+                                section.Items = SplitJsonStrings(iContent);
+                            }
+                        }
+
+                        feature.Sections.Add(section);
+                        sp = sObjEnd + 1;
+                    }
+                }
+            }
+
+            notice.Features.Add(feature);
+            pos = objEnd + 1;
+        }
+
+        return notice;
+    }
+
+    // 対応する閉じ中括弧 '}' の位置を返す（ネスト対応）
+    private int FindMatchingBrace(string json, int openIdx)
+    {
+        int depth = 0;
+        for (int i = openIdx; i < json.Length; i++)
+        {
+            if (json[i] == '{') depth++;
+            else if (json[i] == '}') { depth--; if (depth == 0) return i; }
+        }
+        return -1;
+    }
+
+    // UpdateNotice の内容で告知オーバーレイを動的構築
+    private void BuildNoticeUI(UpdateNotice notice)
+    {
+        noticeContent.Children.Clear();
+
+        // バージョンバッジ
+        var versionBadge = new TextBlock
+        {
+            Text = "ver " + notice.Version,
+            FontSize = 11,
+            Foreground = BrushAccent,
+            Padding = new Thickness(10, 2, 10, 5)
+        };
+        var badgeBorder = new Border
+        {
+            Background = BrushStarOn,
+            CornerRadius = new CornerRadius(10),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 16),
+            Child = versionBadge
+        };
+        noticeContent.Children.Add(badgeBorder);
+
+        // 区切り線
+        noticeContent.Children.Add(new Border
+        {
+            BorderBrush = BrushBorderNormal,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(0, 16, 0, 0)
+        });
+
+        // 各 feature ブロック
+        for (int fi = 0; fi < notice.Features.Count; fi++)
+        {
+            var feature = notice.Features[fi];
+            if (fi > 0)
+                noticeContent.Children.Add(new Border { Height = 12 });
+
+            // タイトル
+            noticeContent.Children.Add(new TextBlock
+            {
+                Text = feature.Title,
+                FontSize = 13, FontWeight = FontWeights.Medium,
+                Foreground = BrushAccent,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            // 説明文
+            if (!string.IsNullOrEmpty(feature.Description))
+            {
+                noticeContent.Children.Add(new TextBlock
+                {
+                    Text = feature.Description,
+                    FontSize = 12, Foreground = BrushFooter,
+                    TextWrapping = TextWrapping.Wrap,
+                    LineHeight = 20,
+                    Margin = new Thickness(0, 0, 0, 12)
+                });
+            }
+
+            // セクション
+            for (int si = 0; si < feature.Sections.Count; si++)
+            {
+                var section = feature.Sections[si];
+                noticeContent.Children.Add(new TextBlock
+                {
+                    Text = section.Heading,
+                    FontSize = 12, FontWeight = FontWeights.Medium,
+                    Margin = new Thickness(0, 0, 0, 4)
+                });
+
+                foreach (var item in section.Items)
+                {
+                    noticeContent.Children.Add(new TextBlock
+                    {
+                        Text = item,
+                        FontSize = 12, Foreground = BrushFooter,
+                        TextWrapping = TextWrapping.Wrap,
+                        LineHeight = 20,
+                        Margin = new Thickness(0, 0, 0, 2)
+                    });
+                }
+
+                // セクション間のスペーサー（最後のセクションには追加しない）
+                if (si < feature.Sections.Count - 1)
+                    noticeContent.Children.Add(new Border { Height = 8 });
+            }
+        }
+    }
+
+    // アップデート告知オーバーレイを表示（フェードイン）
+    private void ShowNoticeOverlay()
+    {
+        noticeOverlay.BeginAnimation(UIElement.OpacityProperty, null);
+        noticeOverlay.Opacity = 0;
+        noticeOverlay.Visibility = Visibility.Visible;
+        var anim = new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(150)));
+        noticeOverlay.BeginAnimation(UIElement.OpacityProperty, anim);
+    }
+
+    // アップデート告知オーバーレイを閉じる（フェードアウト → lastSeenVersion 保存）
+    private void CloseNoticeOverlay()
+    {
+        if (!string.IsNullOrEmpty(pendingNoticeVersion))
+            lastSeenVersion = pendingNoticeVersion;
+        SaveHistory();
+
+        var anim = new DoubleAnimation(1, 0, new Duration(TimeSpan.FromMilliseconds(150)));
+        anim.Completed += delegate
+        {
+            noticeOverlay.Visibility = Visibility.Collapsed;
+            noticeOverlay.BeginAnimation(UIElement.OpacityProperty, null);
+            noticeOverlay.Opacity = 1;
+            searchBox.Focus();
+        };
+        noticeOverlay.BeginAnimation(UIElement.OpacityProperty, anim);
     }
 
     // ==============================================================
@@ -2492,6 +2772,43 @@ public class FileSearchApp : Application
                         </Grid>
                     </StackPanel>
                 </Border>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    <!-- ============ アップデート告知オーバーレイ ============ -->
+    <Grid x:Name='NoticeOverlay' Visibility='Collapsed'>
+        <Border Background='#80000000'/>
+        <Border x:Name='NoticeCard' Background='White' CornerRadius='8'
+                Padding='24,24,28,20'
+                HorizontalAlignment='Center' VerticalAlignment='Center'
+                Width='440'>
+            <StackPanel>
+                <DockPanel Margin='0,0,0,0'>
+                    <Button x:Name='NoticeCloseButton' DockPanel.Dock='Right'
+                            Cursor='Hand' Focusable='False'
+                            VerticalAlignment='Top' Margin='0,-4,-4,0'>
+                        <Button.Template>
+                            <ControlTemplate TargetType='Button'>
+                                <Border x:Name='ncbg' Width='24' Height='24'
+                                        CornerRadius='4' Background='Transparent'>
+                                    <TextBlock Text='✕' FontSize='13'
+                                               Foreground='#999'
+                                               HorizontalAlignment='Center'
+                                               VerticalAlignment='Center'/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property='IsMouseOver' Value='True'>
+                                        <Setter TargetName='ncbg' Property='Background' Value='#F0F0F0'/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <TextBlock Text='アップデートのお知らせ'
+                               FontSize='15' FontWeight='Medium'/>
+                </DockPanel>
+                <StackPanel x:Name='NoticeContent' Margin='0,4,0,0'/>
             </StackPanel>
         </Border>
     </Grid>

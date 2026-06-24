@@ -32,7 +32,7 @@ if not exist "%SRC%" (
 echo Compiling...
 echo.
 
-"%CSC%" /nologo /target:winexe /utf8output /win32icon:"%ICO%" /out:"%OUT%" /lib:"%WPFDIR%" /r:PresentationFramework.dll /r:PresentationCore.dll /r:WindowsBase.dll /r:System.Xaml.dll /r:System.dll /r:System.Core.dll /r:System.Runtime.Serialization.dll /r:System.Xml.dll "%SRC%"
+"%CSC%" /nologo /target:winexe /utf8output /win32icon:"%ICO%" /out:"%OUT%" /lib:"%WPFDIR%" /r:PresentationFramework.dll /r:PresentationCore.dll /r:WindowsBase.dll /r:System.Xaml.dll /r:System.dll /r:System.Core.dll /r:System.Runtime.Serialization.dll /r:System.Xml.dll /r:System.Windows.Forms.dll "%SRC%"
 
 if %errorlevel% neq 0 (
     echo.
