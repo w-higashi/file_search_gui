@@ -51,6 +51,7 @@ public class AppConfig
     public string DepositScript { get; set; }    // null の場合は「差押リストに追加」機能が無効
     public int SearchHistoryMax { get; set; }    // 検索履歴の上限件数
     public int FileHistoryMax { get; set; }      // ファイル履歴の上限件数
+    public int SeizureLogMax { get; set; }       // 差押登録ログの上限件数
 
     public AppConfig()
     {
@@ -58,6 +59,7 @@ public class AppConfig
         DepositScript = null;
         SearchHistoryMax = 5;
         FileHistoryMax = 10;
+        SeizureLogMax = 15;
     }
 
     // file_search_config.json を読み込み、AppConfig を返す
@@ -157,6 +159,16 @@ public class AppConfig
                             config.FileHistoryMax = val;
                     }
                 }
+                else if (line.Contains("\"seizureLogMax\""))
+                {
+                    var colonIdx = line.IndexOf(':');
+                    if (colonIdx >= 0)
+                    {
+                        int val;
+                        if (int.TryParse(line.Substring(colonIdx + 1).Trim().TrimEnd(','), out val) && val > 0)
+                            config.SeizureLogMax = val;
+                    }
+                }
             }
 
             // 存在するフォルダのみを採用
@@ -212,6 +224,17 @@ public class NoticeSection
     public NoticeSection() { Items = new List<string>(); }
 }
 
+// 差押登録ログ1件を表す（サイドパネルの差押登録タブ用）
+public class SeizureLogEntry
+{
+    public string AddressNumber { get; set; }   // 宛名番号
+    public string Name { get; set; }            // 氏名
+    public string InstitutionName { get; set; } // 金融機関名
+    public string ExecutionDate { get; set; }   // 執行日（yyyy-MM-dd）
+    public string DocumentNumber { get; set; }  // 文書番号
+    public DateTime RegisteredAt { get; set; }  // 登録日時
+}
+
 // ==============================================================
 // メインアプリケーション
 // ==============================================================
@@ -233,8 +256,10 @@ public class FileSearchApp : Application
     private Button addButton;                  // depositScript 未設定時は Collapsed
     private ListBox fileHistoryList;
     private ListBox searchHistoryList;          // サイドパネル検索履歴タブ
-    private Border tabHistory, tabFile;        // サイドパネルのタブヘッダー
-    private TextBlock tabHistoryText, tabFileText;
+    private Border tabHistory, tabFile, tabSeizure;  // サイドパネルのタブヘッダー
+    private TextBlock tabHistoryText, tabFileText, tabSeizureText;
+    private ListBox seizureLogList;                   // サイドパネル差押登録タブ
+    private List<SeizureLogEntry> seizureLog = new List<SeizureLogEntry>();
     private TextBlock statusLeft;              // フッター左（件数表示）
     private TextBlock statusRight;             // フッター右（検索フォルダ表示）
 
@@ -252,7 +277,7 @@ public class FileSearchApp : Application
     private string currentSortColumn = "LastWriteTime";  // 現在のソート列
     private bool currentSortAscending = false;           // true=昇順, false=降順
     private bool persistHistory = true;                  // 永続化が有効か（読み書き失敗時に false に切り替わる）
-    private string activeTab = "history";                 // サイドパネルのアクティブタブ（"history" / "file"）
+    private string activeTab = "history";                 // サイドパネルのアクティブタブ（"history" / "file" / "seizure"）
     private FrameworkElement resultItemsPanel;            // 検索結果のデータ行エリア（フェードアニメーション用）
     private BackgroundWorker searchWorker;                // 検索処理の非同期実行用
     private Border searchOverlay;                        // 検索中のローディングオーバーレイ
@@ -389,8 +414,11 @@ public class FileSearchApp : Application
         searchHistoryList = (ListBox)window.FindName("SearchHistoryList");
         tabHistory        = (Border)window.FindName("TabHistory");
         tabFile           = (Border)window.FindName("TabFile");
+        tabSeizure        = (Border)window.FindName("TabSeizure");
         tabHistoryText    = (TextBlock)window.FindName("TabHistoryText");
         tabFileText       = (TextBlock)window.FindName("TabFileText");
+        tabSeizureText    = (TextBlock)window.FindName("TabSeizureText");
+        seizureLogList    = (ListBox)window.FindName("SeizureLogList");
         statusLeft        = (TextBlock)window.FindName("StatusLeft");
         statusRight       = (TextBlock)window.FindName("StatusRight");
         searchOverlay     = (Border)window.FindName("SearchOverlay");
@@ -444,6 +472,10 @@ public class FileSearchApp : Application
 
         // お気に入りフォルダスロットの初期描画
         UpdateFavoriteUI();
+
+        // 差押登録ログの初期読み込み
+        LoadSeizureLog();
+        UpdateSeizureLogUI();
     }
 
     // ==============================================================
@@ -555,6 +587,7 @@ public class FileSearchApp : Application
         // --- サイドパネルのタブ切替 ---
         tabHistory.MouseDown += delegate { SwitchTab("history"); };
         tabFile.MouseDown += delegate { SwitchTab("file"); };
+        tabSeizure.MouseDown += delegate { SwitchTab("seizure"); };
 
         // --- 検索履歴タブ: 左クリックで即検索実行 ---
         searchHistoryList.PreviewMouseUp += delegate(object s, MouseButtonEventArgs e)
@@ -894,19 +927,23 @@ public class FileSearchApp : Application
     private void SwitchTab(string tab)
     {
         activeTab = tab;
-        bool isHistory = tab == "history";
 
         // タブヘッダーの見た目を切替
-        tabHistory.BorderBrush    = isHistory ? BrushAccent : Brushes.Transparent;
-        tabHistoryText.Foreground = isHistory ? BrushAccent : BrushTabInactive;
-        tabHistoryText.FontWeight = isHistory ? FontWeights.Medium : FontWeights.Normal;
-        tabFile.BorderBrush       = isHistory ? Brushes.Transparent : BrushAccent;
-        tabFileText.Foreground    = isHistory ? BrushTabInactive : BrushAccent;
-        tabFileText.FontWeight    = isHistory ? FontWeights.Normal : FontWeights.Medium;
+        var tabs = new[] { tabHistory, tabFile, tabSeizure };
+        var texts = new[] { tabHistoryText, tabFileText, tabSeizureText };
+        var keys = new[] { "history", "file", "seizure" };
+        for (int i = 0; i < tabs.Length; i++)
+        {
+            bool active = keys[i] == tab;
+            tabs[i].BorderBrush = active ? BrushAccent : Brushes.Transparent;
+            texts[i].Foreground = active ? BrushAccent : BrushTabInactive;
+            texts[i].FontWeight = active ? FontWeights.Medium : FontWeights.Normal;
+        }
 
         // タブコンテンツの表示切替
-        searchHistoryList.Visibility = isHistory ? Visibility.Visible : Visibility.Collapsed;
-        fileHistoryList.Visibility   = isHistory ? Visibility.Collapsed : Visibility.Visible;
+        searchHistoryList.Visibility = tab == "history" ? Visibility.Visible : Visibility.Collapsed;
+        fileHistoryList.Visibility   = tab == "file"    ? Visibility.Visible : Visibility.Collapsed;
+        seizureLogList.Visibility    = tab == "seizure" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // サイドパネルの検索履歴リストを再描画
@@ -938,7 +975,6 @@ public class FileSearchApp : Application
             {
                 Text = query,
                 FontSize = 12,
-                FontFamily = new FontFamily("Consolas"),
                 Foreground = BrushAccent,
                 VerticalAlignment = VerticalAlignment.Center
             });
@@ -1282,14 +1318,21 @@ public class FileSearchApp : Application
 
         try
         {
+            // ログパスを構築（file_search.exe と同階層の history/ 配下）
+            var logPath = GetSeizureLogPath();
+            var logArg = "--log=\"" + logPath + "\"";
+
             var psi = new ProcessStartInfo
             {
                 FileName = config.DepositScript,
-                Arguments = string.Join(" ", paths.Select(p => "\"" + p + "\"")),
-                UseShellExecute = true
+                Arguments = logArg + " " + string.Join(" ", paths.Select(p => "\"" + p + "\"")),
+                UseShellExecute = false
             };
 
-            Process.Start(psi);
+            var proc = Process.Start(psi);
+            proc.EnableRaisingEvents = true;
+            proc.Exited += delegate { Dispatcher.BeginInvoke(new Action(ReloadSeizureLog)); };
+
             statusLeft.Text = paths.Length == 1
                 ? "差押リストに追加中: " + System.IO.Path.GetFileName(paths[0])
                 : "差押リストに追加中: " + paths.Length + " 件";
@@ -1531,7 +1574,7 @@ public class FileSearchApp : Application
             {
                 Content = sp,
                 ToolTip = entry.Path,
-                Padding = new Thickness(10, 7.5, 10, 7.5)
+                Padding = new Thickness(10, 8, 10, 8)
             };
 
             fileHistoryList.Items.Add(item);
@@ -1986,6 +2029,124 @@ public class FileSearchApp : Application
     }
 
     // ==============================================================
+    // 差押登録ログ
+    // ==============================================================
+
+    // 差押登録ログファイルのパスを返す（history/seizure_log_{USERNAME}.json）
+    private string GetSeizureLogPath()
+    {
+        var histDir = System.IO.Path.Combine(exeDir, "history");
+        return System.IO.Path.Combine(histDir, "seizure_log_" + Environment.UserName + ".json");
+    }
+
+    // 差押登録ログを読み込み seizureLog に格納
+    private void LoadSeizureLog()
+    {
+        seizureLog.Clear();
+        try
+        {
+            var logPath = GetSeizureLogPath();
+            if (!File.Exists(logPath)) return;
+
+            var json = File.ReadAllText(logPath, Encoding.UTF8);
+            var entriesStart = json.IndexOf("\"entries\"");
+            if (entriesStart < 0) return;
+            var arrStart = json.IndexOf('[', entriesStart);
+            var arrEnd = FindMatchingBracket(json, arrStart);
+            if (arrStart < 0 || arrEnd < 0) return;
+            var arrContent = json.Substring(arrStart + 1, arrEnd - arrStart - 1);
+
+            int pos = 0;
+            while (pos < arrContent.Length && seizureLog.Count < config.SeizureLogMax)
+            {
+                var objStart = arrContent.IndexOf('{', pos);
+                if (objStart < 0) break;
+                var objEnd = arrContent.IndexOf('}', objStart);
+                if (objEnd < 0) break;
+                var objContent = arrContent.Substring(objStart + 1, objEnd - objStart - 1);
+
+                var entry = new SeizureLogEntry
+                {
+                    AddressNumber   = ExtractJsonStringValue(objContent, "addressNumber") ?? "",
+                    Name            = ExtractJsonStringValue(objContent, "name") ?? "",
+                    InstitutionName = ExtractJsonStringValue(objContent, "institutionName") ?? "",
+                    ExecutionDate   = ExtractJsonStringValue(objContent, "executionDate") ?? "",
+                    DocumentNumber  = ExtractJsonStringValue(objContent, "documentNumber") ?? ""
+                };
+
+                var regStr = ExtractJsonStringValue(objContent, "registeredAt");
+                DateTime regDt;
+                entry.RegisteredAt = DateTime.TryParse(regStr, out regDt) ? regDt : DateTime.MinValue;
+
+                seizureLog.Add(entry);
+                pos = objEnd + 1;
+            }
+        }
+        catch { /* 読み込み失敗時は空のまま */ }
+    }
+
+    // 子プロセス終了後にログを再読み込みしてUIを更新
+    private void ReloadSeizureLog()
+    {
+        LoadSeizureLog();
+        UpdateSeizureLogUI();
+    }
+
+    // サイドパネルの差押登録タブを再描画
+    private void UpdateSeizureLogUI()
+    {
+        seizureLogList.Items.Clear();
+        foreach (var entry in seizureLog)
+        {
+            var sp = new StackPanel { Margin = new Thickness(0, 0, 0, 0) };
+
+            // 1行目: 宛名番号 + 氏名
+            var line1 = new StackPanel { Orientation = Orientation.Horizontal };
+            line1.Children.Add(new TextBlock
+            {
+                Text = entry.AddressNumber,
+                FontSize = 11,
+                Foreground = BrushAccent,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 5, 0)
+            });
+            line1.Children.Add(new TextBlock
+            {
+                Text = entry.Name,
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 100
+            });
+            sp.Children.Add(line1);
+
+            // 2行目: 登録日時
+            sp.Children.Add(new TextBlock
+            {
+                Text = entry.RegisteredAt.ToString("MM/dd HH:mm"),
+                FontSize = 10,
+                Foreground = BrushSecondary,
+                Margin = new Thickness(0, 2, 0, 0)
+            });
+
+            // ToolTip: 金融機関名・文書番号・執行日
+            var toolTip = "金融機関: " + entry.InstitutionName
+                + "\n文書番号: " + entry.DocumentNumber
+                + "\n執行日: " + entry.ExecutionDate;
+
+            var item = new ListBoxItem
+            {
+                Content = sp,
+                Padding = new Thickness(10, 8, 10, 8),
+                BorderBrush = BrushHoverBg,
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                ToolTip = toolTip
+            };
+            seizureLogList.Items.Add(item);
+        }
+    }
+
+    // ==============================================================
     // アップデート告知
     // ==============================================================
 
@@ -2425,7 +2586,7 @@ public class FileSearchApp : Application
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width='*'/>
                 <ColumnDefinition Width='12'/>
-                <ColumnDefinition Width='186'/>
+                <ColumnDefinition Width='210'/>
             </Grid.ColumnDefinitions>
 
             <!-- === 左カラム === -->
@@ -2641,7 +2802,7 @@ public class FileSearchApp : Application
                     <!-- タブヘッダー（アンダーライン方式） -->
                     <Grid DockPanel.Dock='Top' Background='#FAFAFA'>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width='*'/><ColumnDefinition Width='*'/>
+                            <ColumnDefinition Width='*'/><ColumnDefinition Width='*'/><ColumnDefinition Width='*'/>
                         </Grid.ColumnDefinitions>
                         <Border x:Name='TabHistory' Grid.Column='0' Cursor='Hand'
                                 Background='Transparent'
@@ -2656,6 +2817,14 @@ public class FileSearchApp : Application
                                 Padding='4,8,4,6' BorderThickness='0,0,0,2'
                                 BorderBrush='Transparent'>
                             <TextBlock x:Name='TabFileText' Text='ファイル'
+                                       FontSize='11' Foreground='#777'
+                                       HorizontalAlignment='Center'/>
+                        </Border>
+                        <Border x:Name='TabSeizure' Grid.Column='2' Cursor='Hand'
+                                Background='Transparent'
+                                Padding='4,8,4,6' BorderThickness='0,0,0,2'
+                                BorderBrush='Transparent'>
+                            <TextBlock x:Name='TabSeizureText' Text='差押登録'
                                        FontSize='11' Foreground='#777'
                                        HorizontalAlignment='Center'/>
                         </Border>
@@ -2675,6 +2844,18 @@ public class FileSearchApp : Application
                             </ListBox.Template>
                         </ListBox>
                         <ListBox x:Name='FileHistoryList' BorderThickness='0'
+                                 Background='Transparent' Visibility='Collapsed'
+                                 ItemContainerStyle='{StaticResource HistoryItem}'
+                                 ScrollViewer.HorizontalScrollBarVisibility='Disabled'>
+                            <ListBox.Template>
+                                <ControlTemplate TargetType='ListBox'>
+                                    <ScrollViewer Padding='0' Focusable='False'>
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </ControlTemplate>
+                            </ListBox.Template>
+                        </ListBox>
+                        <ListBox x:Name='SeizureLogList' BorderThickness='0'
                                  Background='Transparent' Visibility='Collapsed'
                                  ItemContainerStyle='{StaticResource HistoryItem}'
                                  ScrollViewer.HorizontalScrollBarVisibility='Disabled'>

@@ -16,10 +16,14 @@
     "   サイドパネルの検索履歴タブに保持する件数の上限。",
     "",
     "■ fileHistoryMax（任意・既定値: 10）",
-    "   サイドパネルのファイルタブに保持する件数の上限。"
+    "   サイドパネルのファイルタブに保持する件数の上限。",
+    "",
+    "■ seizureLogMax（任意・既定値: 15）",
+    "   サイドパネルの差押登録タブに表示する件数の上限。"
   ],
   "searchFolder": "D:\\Work\\Fuchu\\2026\\照会結果",
   "depositSeizureListScript": "D:\\Work\\Fuchu\\2026\\deposit_seizure_list_gui\\deposit_seizure_list.exe",
   "searchHistoryMax": 15,
-  "fileHistoryMax": 15
+  "fileHistoryMax": 15,
+  "seizureLogMax": 15
 }
