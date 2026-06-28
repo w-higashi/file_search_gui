@@ -985,19 +985,25 @@ public class FileSearchApp : Application
                 Stroke = BrushSecondary, StrokeThickness = 1.2
             });
 
-            var sp = new StackPanel { Orientation = Orientation.Horizontal };
-            sp.Children.Add(icon);
-            sp.Children.Add(new TextBlock
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Grid.SetColumn(icon, 0);
+            var queryBlock = new TextBlock
             {
                 Text = query,
                 FontSize = 12,
                 Foreground = BrushAccent,
-                VerticalAlignment = VerticalAlignment.Center
-            });
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            Grid.SetColumn(queryBlock, 1);
+            grid.Children.Add(icon);
+            grid.Children.Add(queryBlock);
 
             searchHistoryList.Items.Add(new ListBoxItem
             {
-                Content = sp,
+                Content = grid,
                 Padding = new Thickness(10, 15, 10, 15)  // ファイルタブの2行と同等の高さに統一
             });
         }
@@ -2158,23 +2164,28 @@ public class FileSearchApp : Application
             var sp = new StackPanel { Margin = new Thickness(0, 0, 0, 0) };
 
             // 1行目: 宛名番号 + 氏名
-            var line1 = new StackPanel { Orientation = Orientation.Horizontal };
-            line1.Children.Add(new TextBlock
+            var line1 = new Grid();
+            line1.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            line1.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var addrBlock = new TextBlock
             {
                 Text = entry.AddressNumber,
                 FontSize = 11,
                 Foreground = BrushAccent,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 5, 0)
-            });
-            line1.Children.Add(new TextBlock
+            };
+            Grid.SetColumn(addrBlock, 0);
+            var nameBlock = new TextBlock
             {
                 Text = entry.Name,
                 FontSize = 11,
                 VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                MaxWidth = 100
-            });
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            Grid.SetColumn(nameBlock, 1);
+            line1.Children.Add(addrBlock);
+            line1.Children.Add(nameBlock);
             sp.Children.Add(line1);
 
             // 2行目: 登録日時
