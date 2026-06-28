@@ -8,8 +8,8 @@
 // 検索結果から「ファイルを開く」または「差押リストに追加」を選択できる。
 // ★お気に入りフォルダ検索モードでは、ユーザー設定のフォルダを対象に
 // 全件表示やファイル名検索が可能。
-// 「差押リストに追加」を選ぶと、deposit_seizure_list.exe を呼び出して
-// そのファイルを処理対象として渡す。
+// 「差押リストに追加」を選ぶと、ファイル内容から預金/生保を自動判定し、
+// deposit_seizure_list.exe または insurance_seizure_list.exe を呼び出す。
 //
 // 【ビルド方法】
 // build.bat を実行（.NET Framework 4.0 の csc.exe を使用）
@@ -30,6 +30,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Packaging;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -49,17 +50,26 @@ using System.Xml;
 public class AppConfig
 {
     public string[] SearchFolders { get; set; }
-    public string DepositScript { get; set; }    // null の場合は「差押リストに追加」機能が無効
+    public string DepositScript { get; set; }    // null の場合は預金差押リスト追加が無効
+    public string InsuranceScript { get; set; }  // null の場合は生保差押リスト追加が無効
     public string SeizureManagerScript { get; set; }  // null の場合は管理ツール起動ボタンが非表示
+    public string DepositDetectCell { get; set; }    // 預金/生保 自動判定セル（例: "A2"）
+    public string DepositDetectValue { get; set; }   // 自動判定値（例: "回答書（単票）"）
     public int SearchHistoryMax { get; set; }    // 検索履歴の上限件数
     public int FileHistoryMax { get; set; }      // ファイル履歴の上限件数
     public int SeizureLogMax { get; set; }       // 差押登録ログの上限件数
+
+    // 差押リスト追加機能の有効判定（預金または生保の少なくとも一方が設定済み）
+    public bool HasSeizureScript { get { return DepositScript != null || InsuranceScript != null; } }
 
     public AppConfig()
     {
         SearchFolders = new string[0];
         DepositScript = null;
+        InsuranceScript = null;
         SeizureManagerScript = null;
+        DepositDetectCell = null;
+        DepositDetectValue = null;
         SearchHistoryMax = 5;
         FileHistoryMax = 10;
         SeizureLogMax = 15;
@@ -150,6 +160,36 @@ public class AppConfig
                         var val = line.Substring(colonIdx + 1).Trim().Trim('"').Replace("\\\\", "\\");
                         if (!string.IsNullOrWhiteSpace(val) && File.Exists(val))
                             config.SeizureManagerScript = val;
+                    }
+                }
+                else if (line.Contains("\"insuranceSeizureListScript\""))
+                {
+                    var colonIdx = line.IndexOf(':');
+                    if (colonIdx >= 0)
+                    {
+                        var val = line.Substring(colonIdx + 1).Trim().Trim('"').Replace("\\\\", "\\");
+                        if (!string.IsNullOrWhiteSpace(val) && File.Exists(val))
+                            config.InsuranceScript = val;
+                    }
+                }
+                else if (line.Contains("\"depositDetectCell\""))
+                {
+                    var colonIdx = line.IndexOf(':');
+                    if (colonIdx >= 0)
+                    {
+                        var val = line.Substring(colonIdx + 1).Trim().Trim('"').TrimEnd(',').Trim();
+                        if (!string.IsNullOrWhiteSpace(val))
+                            config.DepositDetectCell = val;
+                    }
+                }
+                else if (line.Contains("\"depositDetectValue\""))
+                {
+                    var colonIdx = line.IndexOf(':');
+                    if (colonIdx >= 0)
+                    {
+                        var val = line.Substring(colonIdx + 1).Trim().Trim('"').TrimEnd(',').Trim();
+                        if (!string.IsNullOrWhiteSpace(val))
+                            config.DepositDetectValue = val;
                     }
                 }
                 else if (line.Contains("\"searchHistoryMax\""))
@@ -266,7 +306,7 @@ public class FileSearchApp : Application
     private Button clearButton;                // 検索ボックスの × クリアボタン
     private ListView resultList;
     private Button openButton;
-    private Button addButton;                  // depositScript 未設定時は Collapsed
+    private Button addButton;                  // 差押ツール未設定時は Collapsed
     private Button managerButton;              // seizureManagerScript 未設定時は Collapsed
     private ListBox fileHistoryList;
     private ListBox searchHistoryList;          // サイドパネル検索履歴タブ
@@ -389,8 +429,8 @@ public class FileSearchApp : Application
             return;
         }
 
-        // depositSeizureListScript のチェックは AppConfig.Load 内で実施済み
-        // 存在しない場合は config.DepositScript = null（機能無効）
+        // 差押ツールのパスチェックは AppConfig.Load 内で実施済み
+        // 存在しない場合は null（各機能が個別に無効化される）
 
         // --- 履歴の読み込み ---
         LoadHistory();
@@ -462,7 +502,7 @@ public class FileSearchApp : Application
     // UI の初期状態を設定
     private void InitializeUI()
     {
-        // depositScript 未設定時は「差押リストに追加」ボタンは XAML 側で非表示済み
+        // 差押ツール未設定時は「差押リストに追加」ボタンは XAML 側で非表示済み
 
         // フッター右: 検索フォルダ表示
         if (config.SearchFolders.Length == 1)
@@ -811,7 +851,7 @@ public class FileSearchApp : Application
         resultOpen.Click += delegate { OpenSelectedFiles(); };
         resultMenu.Items.Add(resultOpen);
 
-        if (config.DepositScript != null)
+        if (config.HasSeizureScript)
         {
             var resultAdd = new MenuItem { Header = "差押リストに追加", Icon = MakeIcon(IconKind.Plus) };
             resultAdd.Click += delegate { AddSelectedToSeizureList(); };
@@ -835,7 +875,7 @@ public class FileSearchApp : Application
         };
         histMenu.Items.Add(histOpen);
 
-        if (config.DepositScript != null)
+        if (config.HasSeizureScript)
         {
             var histAdd = new MenuItem { Header = "差押リストに追加", Icon = MakeIcon(IconKind.Plus) };
             histAdd.Click += delegate
@@ -1312,29 +1352,70 @@ public class FileSearchApp : Application
             AddToSeizureList(entry.Path);
     }
 
-    // deposit_seizure_list.exe を子プロセスとして呼び出す
-    // config.DepositScript に設定された exe パスにファイルパスを引数として渡す
-    // 複数ファイルを渡した場合は1プロセスで連続処理される
+    // 選択ファイルの種別を判定し、対応する差押予定一覧 作成ツールを呼び出す
+    // ファイル内のセル値で預金/生保を自動判定し、適切なツールに分岐する
     private void AddToSeizureList(params string[] paths)
     {
-        if (config.DepositScript == null) return;
+        if (!config.HasSeizureScript) return;
+        if (paths.Length == 0) return;
 
-        // deposit_seizure_list が既に起動中の場合は競合防止のため中断
-        var depositExeName = System.IO.Path.GetFileNameWithoutExtension(config.DepositScript);
-        if (Process.GetProcessesByName(depositExeName).Length > 0)
-        {
-            MessageBox.Show(
-                "差押予定一覧作成ツールが起動中です。\n処理が完了してから再度実行してください。",
-                "確認", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
+        // ファイル存在チェック
         var missing = paths.Where(p => !File.Exists(p)).ToArray();
         if (missing.Length > 0)
         {
             MessageBox.Show(
                 "ファイルが見つかりません:\n" + string.Join("\n", missing),
                 "エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // ファイル種別を判定して預金/生保に分類
+        var depositPaths = new List<string>();
+        var insurancePaths = new List<string>();
+        foreach (var path in paths)
+        {
+            if (IsDepositFile(path)) depositPaths.Add(path);
+            else insurancePaths.Add(path);
+        }
+
+        // 混在チェック
+        if (depositPaths.Count > 0 && insurancePaths.Count > 0)
+        {
+            MessageBox.Show(
+                "預金と生命保険の照会結果が混在しています。\n同じ種類のファイルを選択してください。",
+                "確認", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        // 呼び出し先の決定
+        string scriptPath;
+        string toolName;
+        if (insurancePaths.Count > 0)
+        {
+            scriptPath = config.InsuranceScript;
+            toolName = "生命保険差押予定一覧 作成ツール";
+        }
+        else
+        {
+            scriptPath = config.DepositScript;
+            toolName = "預金差押予定一覧 作成ツール";
+        }
+
+        if (scriptPath == null)
+        {
+            MessageBox.Show(
+                toolName + "が設定されていません。\nfile_search_config.json を確認してください。",
+                "設定エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // 対象ツールが既に起動中の場合は競合防止のため中断
+        var exeName = System.IO.Path.GetFileNameWithoutExtension(scriptPath);
+        if (Process.GetProcessesByName(exeName).Length > 0)
+        {
+            MessageBox.Show(
+                toolName + "が起動中です。\n処理が完了してから再度実行してください。",
+                "確認", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -1346,7 +1427,7 @@ public class FileSearchApp : Application
 
             var psi = new ProcessStartInfo
             {
-                FileName = config.DepositScript,
+                FileName = scriptPath,
                 Arguments = logArg + " " + string.Join(" ", paths.Select(p => "\"" + p + "\"")),
                 UseShellExecute = false
             };
@@ -1362,8 +1443,178 @@ public class FileSearchApp : Application
         catch (Exception ex)
         {
             MessageBox.Show(
-                "預金差押予定一覧 作成ツールの呼び出しに失敗しました:\n" + ex.Message,
+                toolName + "の呼び出しに失敗しました:\n" + ex.Message,
                 "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // ==============================================================
+    // ファイル種別判定（Open XML）
+    // ==============================================================
+
+    private const string NS_SPREADSHEET = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+    // .xlsm ファイルを ZIP/Open XML として読み取り、指定セルの値で預金ファイルかを判定する
+    // いずれかのシートの depositDetectCell に depositDetectValue が存在すれば預金と判定
+    private bool IsDepositFile(string filePath)
+    {
+        // 判定設定が未構成 → 預金扱い（従来互換）
+        if (config.DepositDetectCell == null || config.DepositDetectValue == null)
+            return true;
+
+        try
+        {
+            using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var package = Package.Open(fs, FileMode.Open, FileAccess.Read))
+            {
+                // 表示中シートのファイル名一覧を取得（hidden / veryHidden を除外）
+                var visibleSheets = GetVisibleSheetFiles(package);
+
+                // 共有文字列テーブルを読み込む
+                var sharedStrings = ReadSharedStrings(package);
+
+                // 表示中シートのみ走査し、指定セルに判定値が存在するか確認
+                foreach (var part in package.GetParts())
+                {
+                    var uri = part.Uri.OriginalString;
+                    if (!uri.StartsWith("/xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    // workbook.xml で非表示と判定されたシートはスキップ
+                    var fileName = uri.Substring(uri.LastIndexOf('/') + 1);
+                    if (!visibleSheets.Contains(fileName)) continue;
+
+                    string cellValue = ReadCellValue(part, config.DepositDetectCell, sharedStrings);
+                    if (cellValue == config.DepositDetectValue) return true;
+                }
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "ファイル種別の判定中にエラーが発生しました。\n預金として処理します。\n\n"
+                + System.IO.Path.GetFileName(filePath) + "\n" + ex.GetType().Name + ": " + ex.Message,
+                "判定エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return true;
+        }
+    }
+
+    // workbook.xml と workbook.xml.rels を読み取り、表示中シートのファイル名一覧を返す
+    // state 属性がないシート（= visible）のみを対象とする
+    private HashSet<string> GetVisibleSheetFiles(Package package)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var wbUri = new Uri("/xl/workbook.xml", UriKind.Relative);
+        if (!package.PartExists(wbUri)) return result;
+
+        var wbPart = package.GetPart(wbUri);
+
+        // workbook.xml.rels から rId → ファイル名のマッピングを構築
+        var relUri = new Uri("/xl/_rels/workbook.xml.rels", UriKind.Relative);
+        var ridToFile = new Dictionary<string, string>();
+        if (package.PartExists(relUri))
+        {
+            using (var stream = package.GetPart(relUri).GetStream(FileMode.Open, FileAccess.Read))
+            {
+                var doc = new XmlDocument();
+                doc.Load(stream);
+                foreach (XmlNode node in doc.GetElementsByTagName("Relationship"))
+                {
+                    var id = node.Attributes["Id"];
+                    var target = node.Attributes["Target"];
+                    if (id != null && target != null)
+                    {
+                        // Target="worksheets/sheet1.xml" → "sheet1.xml"
+                        var t = target.Value;
+                        var fn = t.Substring(t.LastIndexOf('/') + 1);
+                        ridToFile[id.Value] = fn;
+                    }
+                }
+            }
+        }
+
+        // workbook.xml から表示中シートの rId を取得
+        using (var stream = wbPart.GetStream(FileMode.Open, FileAccess.Read))
+        {
+            var doc = new XmlDocument();
+            doc.Load(stream);
+
+            var nsmgr = new XmlNamespaceManager(doc.NameTable);
+            nsmgr.AddNamespace("s", NS_SPREADSHEET);
+            nsmgr.AddNamespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships");
+
+            foreach (XmlNode sheet in doc.SelectNodes("//s:sheets/s:sheet", nsmgr))
+            {
+                // state 属性がない = visible（hidden / veryHidden はスキップ）
+                var stateAttr = sheet.Attributes["state"];
+                if (stateAttr != null) continue;
+
+                var ridAttr = sheet.Attributes["r:id"];
+                if (ridAttr != null && ridToFile.ContainsKey(ridAttr.Value))
+                    result.Add(ridToFile[ridAttr.Value]);
+            }
+        }
+
+        return result;
+    }
+
+    // Open XML の共有文字列テーブル（/xl/sharedStrings.xml）を読み込む
+    private List<string> ReadSharedStrings(Package package)
+    {
+        var strings = new List<string>();
+        var uri = new Uri("/xl/sharedStrings.xml", UriKind.Relative);
+        if (!package.PartExists(uri)) return strings;
+
+        using (var stream = package.GetPart(uri).GetStream(FileMode.Open, FileAccess.Read))
+        {
+            var doc = new XmlDocument();
+            doc.Load(stream);
+
+            var nsmgr = new XmlNamespaceManager(doc.NameTable);
+            nsmgr.AddNamespace("s", NS_SPREADSHEET);
+
+            foreach (XmlNode si in doc.SelectNodes("//s:si", nsmgr))
+            {
+                // <si><t>text</t></si> または <si><r><t>text</t></r>...</si>
+                var tNodes = si.SelectNodes(".//s:t", nsmgr);
+                var sb = new StringBuilder();
+                foreach (XmlNode t in tNodes) sb.Append(t.InnerText);
+                strings.Add(sb.ToString());
+            }
+        }
+        return strings;
+    }
+
+    // シート XML から指定セル（例: "A2"）の値を読み取る
+    private string ReadCellValue(PackagePart sheetPart, string cellRef, List<string> sharedStrings)
+    {
+        using (var stream = sheetPart.GetStream(FileMode.Open, FileAccess.Read))
+        {
+            var doc = new XmlDocument();
+            doc.Load(stream);
+
+            var nsmgr = new XmlNamespaceManager(doc.NameTable);
+            nsmgr.AddNamespace("s", NS_SPREADSHEET);
+
+            var cellNode = doc.SelectSingleNode(
+                "//s:sheetData/s:row/s:c[@r='" + cellRef + "']", nsmgr);
+            if (cellNode == null) return null;
+
+            var vNode = cellNode.SelectSingleNode("s:v", nsmgr);
+            if (vNode == null) return null;
+
+            // t="s" → 共有文字列テーブルのインデックス参照
+            var typeAttr = cellNode.Attributes["t"];
+            if (typeAttr != null && typeAttr.Value == "s")
+            {
+                int idx;
+                if (int.TryParse(vNode.InnerText, out idx) && idx < sharedStrings.Count)
+                    return sharedStrings[idx];
+                return null;
+            }
+
+            return vNode.InnerText;
         }
     }
 
@@ -1483,7 +1734,7 @@ public class FileSearchApp : Application
         bool hasSelection = resultList.SelectedItem != null
             || fileHistoryList.SelectedIndex >= 0;
         openButton.IsEnabled = hasSelection;
-        addButton.IsEnabled = hasSelection && config.DepositScript != null;
+        addButton.IsEnabled = hasSelection && config.HasSeizureScript;
     }
 
     // サイドパネルで選択中のファイル履歴エントリを返す（未選択時は null）
@@ -2480,8 +2731,8 @@ public class FileSearchApp : Application
     // .NET Framework 4.0 の csc.exe では XAML ファイルの埋め込み（BAML）が使えないため
     private Window BuildWindow()
     {
-        // depositScript の有無に応じてボタンの XAML を動的生成
-        string addButtonXaml = config.DepositScript != null
+        // 差押ツールの有無に応じてボタンの XAML を動的生成
+        string addButtonXaml = config.HasSeizureScript
             ? @"<Button x:Name='AddButton' Grid.Column='2'
                         Style='{StaticResource AB}' IsEnabled='False'>
                     <StackPanel Orientation='Horizontal'>
@@ -2511,9 +2762,9 @@ public class FileSearchApp : Application
                         Visibility='Collapsed' Style='{StaticResource MB}'/>";
 
         // 各ボタンの設定有無に応じて列定義を構築
-        string colGap1 = config.DepositScript != null
+        string colGap1 = config.HasSeizureScript
             ? "<ColumnDefinition Width='8'/>" : "<ColumnDefinition Width='0'/>";
-        string colAdd = config.DepositScript != null
+        string colAdd = config.HasSeizureScript
             ? "<ColumnDefinition Width='*'/>" : "<ColumnDefinition Width='0'/>";
         string colGap2 = config.SeizureManagerScript != null
             ? "<ColumnDefinition Width='8'/>" : "<ColumnDefinition Width='0'/>";
