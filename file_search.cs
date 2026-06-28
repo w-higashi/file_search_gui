@@ -31,6 +31,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -49,6 +50,7 @@ public class AppConfig
 {
     public string[] SearchFolders { get; set; }
     public string DepositScript { get; set; }    // null の場合は「差押リストに追加」機能が無効
+    public string SeizureManagerScript { get; set; }  // null の場合は管理ツール起動ボタンが非表示
     public int SearchHistoryMax { get; set; }    // 検索履歴の上限件数
     public int FileHistoryMax { get; set; }      // ファイル履歴の上限件数
     public int SeizureLogMax { get; set; }       // 差押登録ログの上限件数
@@ -57,6 +59,7 @@ public class AppConfig
     {
         SearchFolders = new string[0];
         DepositScript = null;
+        SeizureManagerScript = null;
         SearchHistoryMax = 5;
         FileHistoryMax = 10;
         SeizureLogMax = 15;
@@ -137,6 +140,16 @@ public class AppConfig
                         var val = line.Substring(colonIdx + 1).Trim().Trim('"').Replace("\\\\", "\\");
                         if (!string.IsNullOrWhiteSpace(val) && File.Exists(val))
                             config.DepositScript = val;
+                    }
+                }
+                else if (line.Contains("\"seizureListManagerScript\""))
+                {
+                    var colonIdx = line.IndexOf(':');
+                    if (colonIdx >= 0)
+                    {
+                        var val = line.Substring(colonIdx + 1).Trim().Trim('"').Replace("\\\\", "\\");
+                        if (!string.IsNullOrWhiteSpace(val) && File.Exists(val))
+                            config.SeizureManagerScript = val;
                     }
                 }
                 else if (line.Contains("\"searchHistoryMax\""))
@@ -254,6 +267,7 @@ public class FileSearchApp : Application
     private ListView resultList;
     private Button openButton;
     private Button addButton;                  // depositScript 未設定時は Collapsed
+    private Button managerButton;              // seizureManagerScript 未設定時は Collapsed
     private ListBox fileHistoryList;
     private ListBox searchHistoryList;          // サイドパネル検索履歴タブ
     private Border tabHistory, tabFile, tabSeizure;  // サイドパネルのタブヘッダー
@@ -410,6 +424,7 @@ public class FileSearchApp : Application
         resultList        = (ListView)window.FindName("ResultList");
         openButton        = (Button)window.FindName("OpenButton");
         addButton         = (Button)window.FindName("AddButton");
+        managerButton     = (Button)window.FindName("ManagerButton");
         fileHistoryList   = (ListBox)window.FindName("FileHistoryList");
         searchHistoryList = (ListBox)window.FindName("SearchHistoryList");
         tabHistory        = (Border)window.FindName("TabHistory");
@@ -651,6 +666,7 @@ public class FileSearchApp : Application
         // --- アクションボタン ---
         openButton.Click += delegate { OpenSelectedFiles(); };
         addButton.Click += delegate { AddSelectedToSeizureList(); };
+        managerButton.Click += delegate { LaunchSeizureListManager(); };
 
         // --- 列ヘッダーソート ---
         resultList.AddHandler(GridViewColumnHeader.ClickEvent,
@@ -1341,6 +1357,47 @@ public class FileSearchApp : Application
         {
             MessageBox.Show(
                 "預金差押予定一覧 作成ツールの呼び出しに失敗しました:\n" + ex.Message,
+                "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // --- Win32 API（管理ツールの前面表示用） ---
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    private const int SW_RESTORE = 9;
+
+    // 差押予定一覧 管理ツールを起動する
+    // 既に起動中の場合はウィンドウを前面に表示する
+    private void LaunchSeizureListManager()
+    {
+        if (config.SeizureManagerScript == null) return;
+
+        var exeName = System.IO.Path.GetFileNameWithoutExtension(config.SeizureManagerScript);
+        var existing = Process.GetProcessesByName(exeName);
+        if (existing.Length > 0)
+        {
+            // 既に起動中 → ウィンドウを前面に表示
+            var hwnd = existing[0].MainWindowHandle;
+            if (hwnd != IntPtr.Zero)
+            {
+                ShowWindow(hwnd, SW_RESTORE);
+                SetForegroundWindow(hwnd);
+            }
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = config.SeizureManagerScript,
+                UseShellExecute = false
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "差押予定一覧 管理ツールの起動に失敗しました:\n" + ex.Message,
                 "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -2427,10 +2484,31 @@ public class FileSearchApp : Application
             : @"<Button x:Name='AddButton' Grid.Column='2'
                         Visibility='Collapsed' Style='{StaticResource AB}'/>";
 
-        // depositScript 未設定時はボタン列を1列にまとめる
-        string buttonColumns = config.DepositScript != null
-            ? "<ColumnDefinition Width='*'/><ColumnDefinition Width='8'/><ColumnDefinition Width='*'/>"
-            : "<ColumnDefinition Width='*'/><ColumnDefinition Width='0'/><ColumnDefinition Width='0'/>";
+        // seizureManagerScript の有無に応じて管理ツール起動ボタンを動的生成
+        string managerButtonXaml = config.SeizureManagerScript != null
+            ? @"<Button x:Name='ManagerButton' Grid.Column='4'
+                        Style='{StaticResource MB}' Padding='0' Width='34' Height='34'
+                        ToolTip='差押予定一覧管理ツール'>
+                    <Canvas Width='26' Height='26'>
+                        <Path Data='M11.0,5.7 L11.8,3.2 L14.2,3.2 L15.0,5.7 L16.7,6.4 L19.1,5.2 L20.8,6.9 L19.6,9.3 L20.3,11.0 L22.8,11.8 L22.8,14.2 L20.3,15.0 L19.6,16.7 L20.8,19.1 L19.1,20.8 L16.7,19.6 L15.0,20.3 L14.2,22.8 L11.8,22.8 L11.0,20.3 L9.3,19.6 L6.9,20.8 L5.2,19.1 L6.4,16.7 L5.7,15.0 L3.2,14.2 L3.2,11.8 L5.7,11.0 L6.4,9.3 L5.2,6.9 L6.9,5.2 L9.3,6.4 Z'
+                              Fill='White'/>
+                        <Ellipse Canvas.Left='10.1' Canvas.Top='10.1' Width='5.8' Height='5.8'
+                                 Fill='#546E7A'/>
+                    </Canvas>
+                </Button>"
+            : @"<Button x:Name='ManagerButton' Grid.Column='4'
+                        Visibility='Collapsed' Style='{StaticResource MB}'/>";
+
+        // 各ボタンの設定有無に応じて列定義を構築
+        string colGap1 = config.DepositScript != null
+            ? "<ColumnDefinition Width='8'/>" : "<ColumnDefinition Width='0'/>";
+        string colAdd = config.DepositScript != null
+            ? "<ColumnDefinition Width='*'/>" : "<ColumnDefinition Width='0'/>";
+        string colGap2 = config.SeizureManagerScript != null
+            ? "<ColumnDefinition Width='8'/>" : "<ColumnDefinition Width='0'/>";
+        string colManager = config.SeizureManagerScript != null
+            ? "<ColumnDefinition Width='Auto'/>" : "<ColumnDefinition Width='0'/>";
+        string buttonColumns = "<ColumnDefinition Width='*'/>" + colGap1 + colAdd + colGap2 + colManager;
 
         string xaml = @"
 <Window
@@ -2485,6 +2563,23 @@ public class FileSearchApp : Application
                         <Trigger Property='IsEnabled' Value='False'>
                             <Setter TargetName='bd' Property='Background' Value='#F5F5F5'/>
                             <Setter Property='Foreground' Value='#CCC'/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+
+        <!-- 管理ツールボタン（スレート背景 + 白アイコン） -->
+        <Style x:Key='MB' TargetType='Button'>
+            <Setter Property='Background' Value='#546E7A'/><Setter Property='Foreground' Value='White'/>
+            <Setter Property='Cursor' Value='Hand'/><Setter Property='BorderThickness' Value='0'/>
+            <Setter Property='Template'><Setter.Value>
+                <ControlTemplate TargetType='Button'>
+                    <Border x:Name='bd' Background='{TemplateBinding Background}'
+                            CornerRadius='4' Padding='{TemplateBinding Padding}'>
+                        <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property='IsMouseOver' Value='True'>
+                            <Setter TargetName='bd' Property='Background' Value='#455A64'/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value></Setter>
@@ -2705,6 +2800,7 @@ public class FileSearchApp : Application
                         </StackPanel>
                     </Button>
                     " + addButtonXaml + @"
+                    " + managerButtonXaml + @"
                 </Grid>
 
                 <!-- 検索結果パネル -->
